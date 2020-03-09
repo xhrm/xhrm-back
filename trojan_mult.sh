@@ -168,7 +168,7 @@ EOF
 	#设置伪装站
 	rm -rf /usr/share/nginx/html/*
 	cd /usr/share/nginx/html/
-	wget https://github.com/xhrm/xhrm-back/blob/master/index.zip
+	wget https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip
     	unzip index.zip
 	systemctl stop nginx
 	sleep 5
