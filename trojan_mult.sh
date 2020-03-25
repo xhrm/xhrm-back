@@ -210,13 +210,13 @@ EOF
 	systemctl start trojan.service
 	systemctl enable trojan.service
 	green "======================================================================"
-	green "Trojan已安装完成。
+	green "Trojan已安装完成!"
 	green "======================================================================"
 	else
         red "==================================="
 	red "https证书没有申请成果，自动安装失败"
 	green "不要担心，你可以手动修复证书申请"
-	green "1. 重启VPS"
+	green "1. 重启云服务器"
 	green "2. 重新执行脚本，使用修复证书功能"
 	red "==================================="
 	fi
@@ -414,6 +414,8 @@ start_menu(){
     green " ======================================="
     green " 介绍：一键安装trojan      "
     green " 系统：centos7+/debian9+/ubuntu16.04+"
+    green " 网站：www.atrandys.com              "
+    green " Youtube：Randy's 堡垒                "
     blue " 声明："
     red " *请不要在任何生产环境使用此脚本"
     red " *请不要有其他程序占用80和443端口"
