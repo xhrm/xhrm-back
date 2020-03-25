@@ -414,8 +414,6 @@ start_menu(){
     green " ======================================="
     green " 介绍：一键安装trojan      "
     green " 系统：centos7+/debian9+/ubuntu16.04+"
-    green " 网站：www.atrandys.com              "
-    green " Youtube：Randy's 堡垒                "
     blue " 声明："
     red " *请不要在任何生产环境使用此脚本"
     red " *请不要有其他程序占用80和443端口"
