@@ -12,7 +12,7 @@ red(){
 version_lt(){
     test "$(echo "$@" | tr " " "\n" | sort -rV | head -n 1)" != "$1"; 
 }
-#copy from xhrm ss scripts
+#copy from 秋水逸冰 ss scripts
 if [[ -f /etc/redhat-release ]]; then
     release="centos"
     systemPackage="yum"
@@ -210,13 +210,18 @@ EOF
 	systemctl start trojan.service
 	systemctl enable trojan.service
 	green "======================================================================"
-	green "Trojan已安装完成!"
+	green "Trojan已安装完成，请使用以下链接下载trojan客户端，此客户端已配置好所有参数"
+	green "1、复制下面的链接，在浏览器打开，下载客户端，注意此下载链接将在1个小时后失效"
+	blue "http://${your_domain}/$trojan_path/trojan-cli.zip"
+	green "2、将下载的压缩包解压，打开文件夹，打开start.bat即打开并运行Trojan客户端"
+	green "3、打开stop.bat即关闭Trojan客户端"
+	green "4、Trojan客户端需要搭配浏览器插件使用，例如switchyomega等"
 	green "======================================================================"
 	else
         red "==================================="
 	red "https证书没有申请成果，自动安装失败"
 	green "不要担心，你可以手动修复证书申请"
-	green "1. 重启VPS"
+	green "1. 重启云服务器"
 	green "2. 重新执行脚本，使用修复证书功能"
 	red "==================================="
 	fi
@@ -266,6 +271,7 @@ if [ "$release" == "centos" ]; then
     firewall_status=`firewall-cmd --state`
     if [ "$firewall_status" == "running" ]; then
         green "检测到firewalld开启状态，添加放行80/443端口规则"
+	yum install -y policycoreutils-python >/dev/null 2>&1
         firewall-cmd --zone=public --add-port=80/tcp --permanent
 	firewall-cmd --zone=public --add-port=443/tcp --permanent
 	firewall-cmd --reload
@@ -291,6 +297,11 @@ elif [ "$release" == "ubuntu" ]; then
     fi
     apt-get update
 elif [ "$release" == "debian" ]; then
+    ufw_status=`systemctl status ufw | grep "Active: active"`
+    if [ -n "$ufw_status" ]; then
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+    fi
     apt-get update
 fi
 $systemPackage -y install  nginx wget unzip zip curl tar >/dev/null 2>&1
@@ -328,6 +339,8 @@ fi
 
 function repair_cert(){
 systemctl stop nginx
+iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
 if [ -n "$Port80" ]; then
     process80=`netstat -tlpn | awk -F '[: ]+' '$5=="80"{print $9}'`
@@ -414,7 +427,7 @@ start_menu(){
     green " ======================================="
     green " 介绍：一键安装trojan      "
     green " 系统：centos7+/debian9+/ubuntu16.04+"
-    green " 网站：www.xhrm.org              "
+    green " 网站：www.xhrm.org           "
     blue " 声明："
     red " *请不要在任何生产环境使用此脚本"
     red " *请不要有其他程序占用80和443端口"
