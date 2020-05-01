@@ -1,48 +1,50 @@
 #!/bin/bash
-
-blue(){
+#
+#Author: atrandys
+#
+#
+function blue(){
     echo -e "\033[34m\033[01m$1\033[0m"
 }
-green(){
+function green(){
     echo -e "\033[32m\033[01m$1\033[0m"
 }
-red(){
+function red(){
     echo -e "\033[31m\033[01m$1\033[0m"
 }
-version_lt(){
+function version_lt(){
     test "$(echo "$@" | tr " " "\n" | sort -rV | head -n 1)" != "$1"; 
 }
-#copy from xhrm ss scripts
+#copy from 秋水逸冰 ss scripts
 if [[ -f /etc/redhat-release ]]; then
     release="centos"
     systemPackage="yum"
-    systempwd="/usr/lib/systemd/system/"
 elif cat /etc/issue | grep -Eqi "debian"; then
     release="debian"
     systemPackage="apt-get"
-    systempwd="/lib/systemd/system/"
 elif cat /etc/issue | grep -Eqi "ubuntu"; then
     release="ubuntu"
     systemPackage="apt-get"
-    systempwd="/lib/systemd/system/"
 elif cat /etc/issue | grep -Eqi "centos|red hat|redhat"; then
     release="centos"
     systemPackage="yum"
-    systempwd="/usr/lib/systemd/system/"
 elif cat /proc/version | grep -Eqi "debian"; then
     release="debian"
     systemPackage="apt-get"
-    systempwd="/lib/systemd/system/"
 elif cat /proc/version | grep -Eqi "ubuntu"; then
     release="ubuntu"
     systemPackage="apt-get"
-    systempwd="/lib/systemd/system/"
 elif cat /proc/version | grep -Eqi "centos|red hat|redhat"; then
     release="centos"
     systemPackage="yum"
-    systempwd="/usr/lib/systemd/system/"
 fi
-function install(){
+systempwd="/etc/systemd/system/"
+
+#install & config trojan
+function install_trojan(){
+$systemPackage install -y nginx
+systemctl stop nginx
+sleep 5
 cat > /etc/nginx/nginx.conf <<-EOF
 user  root;
 worker_processes  1;
@@ -76,7 +78,6 @@ EOF
 	cd /usr/share/nginx/html/
 	wget https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip >/dev/null 2>&1
     	unzip index.zip >/dev/null 2>&1
-	systemctl stop nginx
 	sleep 5
 	#申请https证书
 	if [ ! -d "/usr/src" ]; then
@@ -85,10 +86,7 @@ EOF
 	mkdir /usr/src/trojan-cert /usr/src/trojan-temp
 	curl https://get.acme.sh | sh
 	~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
-    	~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
-        --key-file   /usr/src/trojan-cert/private.key \
-        --fullchain-file /usr/src/trojan-cert/fullchain.cer
-	if test -s /usr/src/trojan-cert/fullchain.cer; then
+	if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
 	systemctl start nginx
         cd /usr/src
 	#wget https://github.com/trojan-gfw/trojan/releases/download/v1.13.0/trojan-1.13.0-linux-amd64.tar.xz
@@ -102,7 +100,6 @@ EOF
 	wget -P /usr/src/trojan-temp https://github.com/trojan-gfw/trojan/releases/download/v${latest_version}/trojan-${latest_version}-win.zip >/dev/null 2>&1
 	unzip trojan-cli.zip >/dev/null 2>&1
 	unzip /usr/src/trojan-temp/trojan-${latest_version}-win.zip -d /usr/src/trojan-temp/ >/dev/null 2>&1
-	cp /usr/src/trojan-cert/fullchain.cer /usr/src/trojan-cli/fullchain.cer
 	mv -f /usr/src/trojan-temp/trojan/trojan.exe /usr/src/trojan-cli/ 
 	trojan_passwd=$(cat /dev/urandom | head -1 | md5sum | head -c 8)
 	cat > /usr/src/trojan-cli/config.json <<-EOF
@@ -119,7 +116,7 @@ EOF
     "ssl": {
         "verify": true,
         "verify_hostname": true,
-        "cert": "fullchain.cer",
+        "cert": "",
         "cipher_tls13":"TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
 	"sni": "",
         "alpn": [
@@ -198,19 +195,23 @@ After=network.target
 Type=simple  
 PIDFile=/usr/src/trojan/trojan/trojan.pid
 ExecStart=/usr/src/trojan/trojan -c "/usr/src/trojan/server.conf"  
-ExecReload=  
-ExecStop=kill -9 $(pidof /usr/src/trojan/trojan)  
-PrivateTmp=true  
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=on-failure
+RestartSec=1s
    
 [Install]  
 WantedBy=multi-user.target
 EOF
 
 	chmod +x ${systempwd}trojan.service
-	systemctl start trojan.service
 	systemctl enable trojan.service
+	cd /root
+	~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
+        --key-file   /usr/src/trojan-cert/private.key \
+        --fullchain-file  /usr/src/trojan-cert/fullchain.cer \
+	--reloadcmd  "systemctl restart trojan"	
 	green "======================================================================"
-	green "Trojan已安装完成!"
+	green "Trojan已安装完成！"
 	green "======================================================================"
 	else
         red "==================================="
@@ -221,7 +222,8 @@ EOF
 	red "==================================="
 	fi
 }
-function install_trojan(){
+function preinstall_check(){
+
 nginx_status=`ps -aux | grep "nginx: worker" |grep -v "grep"`
 if [ -n "$nginx_status" ]; then
     systemctl stop nginx
@@ -243,12 +245,14 @@ if [ -n "$Port443" ]; then
     red "============================================================="
     exit 1
 fi
-CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
-if [ "$CHECK" != "SELINUX=disabled" ]; then
-    green "检测到SELinux开启状态，添加放行80/443端口规则"
-    yum install -y policycoreutils-python >/dev/null 2>&1
-    semanage port -a -t http_port_t -p tcp 80
-    semanage port -a -t http_port_t -p tcp 443
+if [ -f "/etc/selinux/config" ]; then
+    CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
+    if [ "$CHECK" != "SELINUX=disabled" ]; then
+        green "检测到SELinux开启状态，添加放行80/443端口规则"
+        yum install -y policycoreutils-python >/dev/null 2>&1
+        semanage port -m -t http_port_t -p tcp 80
+        semanage port -m -t http_port_t -p tcp 443
+    fi
 fi
 if [ "$release" == "centos" ]; then
     if  [ -n "$(grep ' 6\.' /etc/redhat-release)" ] ;then
@@ -263,10 +267,9 @@ if [ "$release" == "centos" ]; then
     red "==============="
     exit
     fi
-    firewall_status=`firewall-cmd --state`
-    if [ "$firewall_status" == "running" ]; then
+    firewall_status=`systemctl status firewalld | grep "Active: active"`
+    if [ -n "$firewall_status" ]; then
         green "检测到firewalld开启状态，添加放行80/443端口规则"
-	yum install -y policycoreutils-python >/dev/null 2>&1
         firewall-cmd --zone=public --add-port=80/tcp --permanent
 	firewall-cmd --zone=public --add-port=443/tcp --permanent
 	firewall-cmd --reload
@@ -299,9 +302,7 @@ elif [ "$release" == "debian" ]; then
     fi
     apt-get update
 fi
-$systemPackage -y install  nginx wget unzip zip curl tar >/dev/null 2>&1
-systemctl enable nginx
-systemctl stop nginx
+$systemPackage -y install  wget unzip zip curl tar >/dev/null 2>&1
 green "======================="
 blue "请输入绑定到本云服务器的域名"
 green "======================="
@@ -313,7 +314,7 @@ if [ $real_addr == $local_addr ] ; then
 	green "       域名解析正常，开始安装trojan"
 	green "=========================================="
 	sleep 1s
-        install
+        install_trojan
 	
 else
         red "===================================="
@@ -325,7 +326,7 @@ else
 	if [[ $yn == [Yy] ]]; then
             green "强制继续运行脚本"
 	    sleep 1s
-	    install
+	    install_trojan
 	else
 	    exit 1
 	fi
@@ -355,7 +356,8 @@ if [ $real_addr == $local_addr ] ; then
     ~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
     ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
         --key-file   /usr/src/trojan-cert/private.key \
-        --fullchain-file /usr/src/trojan-cert/fullchain.cer
+        --fullchain-file /usr/src/trojan-cert/fullchain.cer \
+	--reloadcmd  "systemctl restart trojan"
     if test -s /usr/src/trojan-cert/fullchain.cer; then
         green "证书申请成功"
 	green "请将/usr/src/trojan-cert/下的fullchain.cer下载放到客户端trojan-cli文件夹"
@@ -387,6 +389,7 @@ function remove_trojan(){
     fi
     rm -rf /usr/src/trojan*
     rm -rf /usr/share/nginx/html/*
+    rm -rf /root/.acme.sh/
     green "=============="
     green "trojan删除完毕"
     green "=============="
@@ -422,7 +425,7 @@ start_menu(){
     green " ======================================="
     green " 介绍：一键安装trojan      "
     green " 系统：centos7+/debian9+/ubuntu16.04+"
-    green " 网站：www.xhrm.org           "
+    green " 网站：www.xhrm.org "
     blue " 声明："
     red " *请不要在任何生产环境使用此脚本"
     red " *请不要有其他程序占用80和443端口"
@@ -438,7 +441,7 @@ start_menu(){
     read -p "请输入数字 :" num
     case "$num" in
     1)
-    install_trojan
+    preinstall_check
     ;;
     2)
     remove_trojan 
