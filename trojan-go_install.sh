@@ -399,7 +399,7 @@ download_install(){
       case  ${bit} in
       "x86_64")
         echo "Getting the latest version of trojan-go"
-latest_version="$(curl -s "https://api.github.com/repos/p4gefau1t/trojan-go/releases" | jq '.[0].tag_name' --raw-output)"
+latest_version="$(wget --no-check-certificate -O ${trojan_bin_dir}/trojan-go-linux-amd64.zip "https://api.github.com/repos/p4gefau1t/trojan-go/releases" | jq '.[0].tag_name' --raw-output)"
 echo "${latest_version}"
 trojango_link="https://github.com/p4gefau1t/trojan-go/releases/download/${latest_version}/trojan-go-linux-amd64.zip"
         sucess_or_fail "trojan-go下载"
@@ -408,7 +408,7 @@ trojango_link="https://github.com/p4gefau1t/trojan-go/releases/download/${latest
         ;;
       "i386" | "i686")
         echo "Getting the latest version of trojan-go"
-latest_version="$(curl -s "https://api.github.com/repos/p4gefau1t/trojan-go/releases" | jq '.[0].tag_name' --raw-output)"
+latest_version="$(wget --no-check-certificate -O ${trojan_bin_dir}/trojan-go-linux-amd64.zip "https://api.github.com/repos/p4gefau1t/trojan-go/releases" | jq '.[0].tag_name' --raw-output)"
 echo "${latest_version}"
 trojango_link="https://github.com/p4gefau1t/trojan-go/releases/download/${latest_version}/trojan-go-linux-amd64.zip"
          sucess_or_fail "trojan-go下载"
@@ -417,7 +417,7 @@ trojango_link="https://github.com/p4gefau1t/trojan-go/releases/download/${latest
         ;;
       "armv7l")
         echo "Getting the latest version of trojan-go"
-latest_version="$(curl -s "https://api.github.com/repos/p4gefau1t/trojan-go/releases" | jq '.[0].tag_name' --raw-output)"
+latest_version="$(wget --no-check-certificate -O ${trojan_bin_dir}/trojan-go-linux-amd64.zip "https://api.github.com/repos/p4gefau1t/trojan-go/releases" | jq '.[0].tag_name' --raw-output)"
 echo "${latest_version}"
 trojango_link="https://github.com/p4gefau1t/trojan-go/releases/download/${latest_version}/trojan-go-linux-amd64.zip"
          sucess_or_fail "trojan-go下载"
