@@ -807,14 +807,7 @@ EOF
     # 下载伪装站点 并设置伪装网站
     rm -rf ${configWebsitePath}/*
     mkdir -p ${configWebsiteDownloadPath}
-
-    downloadAndUnzip "https://github.com/jinwyp/one_click_script/raw/master/download/website.zip" "${configWebsitePath}" "website.zip"
-    downloadAndUnzip "https://github.com/jinwyp/one_click_script/raw/master/download/trojan_client_all.zip" "${configWebsiteDownloadPath}" "trojan_client_all.zip"
-    downloadAndUnzip "https://github.com/jinwyp/one_click_script/raw/master/download/trojan-qt5.zip" "${configWebsiteDownloadPath}" "trojan-qt5.zip"
-    
-    downloadAndUnzip "https://github.com/jinwyp/one_click_script/raw/master/download/v2ray_client_all.zip" "${configWebsiteDownloadPath}" "v2ray_client_all.zip"
-    wget -P "${configWebsiteDownloadPath}" "https://github.com/jinwyp/one_click_script/raw/master/download/v2ray-android.zip"
-
+    downloadAndUnzip "https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip"
     sudo systemctl start nginx.service
 
     green " ================================================== "
@@ -912,7 +905,6 @@ function installTrojanWholeProcess(){
             red " 请检查域名和DNS是否生效, 同一域名请不要一天内多次申请!"
             red " 请检查80和443端口是否开启, VPS服务商可能需要添加额外防火墙规则，例如阿里云、谷歌云等!"
             red " 重启VPS, 重新执行脚本, 可重新选择修复证书选项再次申请证书 ! "
-            red " 可参考 https://www.v2rayssr.com/trojan-2.html "
             red "==================================="
             exit
         fi
@@ -981,106 +973,6 @@ function installTrojanServer(){
     "remote_addr": "127.0.0.1",
     "remote_port": 80,
     "password": [
-        "${trojanPassword1}",
-        "${trojanPassword2}",
-        "${trojanPassword3}",
-        "${trojanPassword4}",
-        "${trojanPassword5}",
-        "${trojanPassword6}",
-        "${trojanPassword7}",
-        "${trojanPassword8}",
-        "${trojanPassword9}",
-        "${trojanPassword10}",
-        "${configTrojanPasswordPrefixInput}202000",
-        "${configTrojanPasswordPrefixInput}202010",
-        "${configTrojanPasswordPrefixInput}202011",
-        "${configTrojanPasswordPrefixInput}202012",
-        "${configTrojanPasswordPrefixInput}202013",
-        "${configTrojanPasswordPrefixInput}202014",
-        "${configTrojanPasswordPrefixInput}202015",
-        "${configTrojanPasswordPrefixInput}202016",
-        "${configTrojanPasswordPrefixInput}202017",
-        "${configTrojanPasswordPrefixInput}202018",
-        "${configTrojanPasswordPrefixInput}202019",
-        "${configTrojanPasswordPrefixInput}202020",
-        "${configTrojanPasswordPrefixInput}202021",
-        "${configTrojanPasswordPrefixInput}202022",
-        "${configTrojanPasswordPrefixInput}202023",
-        "${configTrojanPasswordPrefixInput}202024",
-        "${configTrojanPasswordPrefixInput}202025",
-        "${configTrojanPasswordPrefixInput}202026",
-        "${configTrojanPasswordPrefixInput}202027",
-        "${configTrojanPasswordPrefixInput}202028",
-        "${configTrojanPasswordPrefixInput}202029",
-        "${configTrojanPasswordPrefixInput}202030",
-        "${configTrojanPasswordPrefixInput}202031",
-        "${configTrojanPasswordPrefixInput}202032",
-        "${configTrojanPasswordPrefixInput}202033",
-        "${configTrojanPasswordPrefixInput}202034",
-        "${configTrojanPasswordPrefixInput}202035",
-        "${configTrojanPasswordPrefixInput}202036",
-        "${configTrojanPasswordPrefixInput}202037",
-        "${configTrojanPasswordPrefixInput}202038",
-        "${configTrojanPasswordPrefixInput}202039",
-        "${configTrojanPasswordPrefixInput}202040",
-        "${configTrojanPasswordPrefixInput}202041",
-        "${configTrojanPasswordPrefixInput}202042",
-        "${configTrojanPasswordPrefixInput}202043",
-        "${configTrojanPasswordPrefixInput}202044",
-        "${configTrojanPasswordPrefixInput}202045",
-        "${configTrojanPasswordPrefixInput}202046",
-        "${configTrojanPasswordPrefixInput}202047",
-        "${configTrojanPasswordPrefixInput}202048",
-        "${configTrojanPasswordPrefixInput}202049",
-        "${configTrojanPasswordPrefixInput}202050",
-        "${configTrojanPasswordPrefixInput}202051",
-        "${configTrojanPasswordPrefixInput}202052",
-        "${configTrojanPasswordPrefixInput}202053",
-        "${configTrojanPasswordPrefixInput}202054",
-        "${configTrojanPasswordPrefixInput}202055",
-        "${configTrojanPasswordPrefixInput}202056",
-        "${configTrojanPasswordPrefixInput}202057",
-        "${configTrojanPasswordPrefixInput}202058",
-        "${configTrojanPasswordPrefixInput}202059",
-        "${configTrojanPasswordPrefixInput}202060",
-        "${configTrojanPasswordPrefixInput}202061",
-        "${configTrojanPasswordPrefixInput}202062",
-        "${configTrojanPasswordPrefixInput}202063",
-        "${configTrojanPasswordPrefixInput}202064",
-        "${configTrojanPasswordPrefixInput}202065",
-        "${configTrojanPasswordPrefixInput}202066",
-        "${configTrojanPasswordPrefixInput}202067",
-        "${configTrojanPasswordPrefixInput}202068",
-        "${configTrojanPasswordPrefixInput}202069",
-        "${configTrojanPasswordPrefixInput}202070",
-        "${configTrojanPasswordPrefixInput}202071",
-        "${configTrojanPasswordPrefixInput}202072",
-        "${configTrojanPasswordPrefixInput}202073",
-        "${configTrojanPasswordPrefixInput}202074",
-        "${configTrojanPasswordPrefixInput}202075",
-        "${configTrojanPasswordPrefixInput}202076",
-        "${configTrojanPasswordPrefixInput}202077",
-        "${configTrojanPasswordPrefixInput}202078",
-        "${configTrojanPasswordPrefixInput}202079",
-        "${configTrojanPasswordPrefixInput}202080",
-        "${configTrojanPasswordPrefixInput}202081",
-        "${configTrojanPasswordPrefixInput}202082",
-        "${configTrojanPasswordPrefixInput}202083",
-        "${configTrojanPasswordPrefixInput}202084",
-        "${configTrojanPasswordPrefixInput}202085",
-        "${configTrojanPasswordPrefixInput}202086",
-        "${configTrojanPasswordPrefixInput}202087",
-        "${configTrojanPasswordPrefixInput}202088",
-        "${configTrojanPasswordPrefixInput}202089",
-        "${configTrojanPasswordPrefixInput}202090",
-        "${configTrojanPasswordPrefixInput}202091",
-        "${configTrojanPasswordPrefixInput}202092",
-        "${configTrojanPasswordPrefixInput}202093",
-        "${configTrojanPasswordPrefixInput}202094",
-        "${configTrojanPasswordPrefixInput}202095",
-        "${configTrojanPasswordPrefixInput}202096",
-        "${configTrojanPasswordPrefixInput}202097",
-        "${configTrojanPasswordPrefixInput}202098",
         "${configTrojanPasswordPrefixInput}202099"
     ],
     "log_level": 1,
@@ -1151,106 +1043,6 @@ EOF
     "remote_addr": "127.0.0.1",
     "remote_port": 80,
     "password": [
-        "${trojanPassword1}",
-        "${trojanPassword2}",
-        "${trojanPassword3}",
-        "${trojanPassword4}",
-        "${trojanPassword5}",
-        "${trojanPassword6}",
-        "${trojanPassword7}",
-        "${trojanPassword8}",
-        "${trojanPassword9}",
-        "${trojanPassword10}",
-        "${configTrojanPasswordPrefixInput}202000",
-        "${configTrojanPasswordPrefixInput}202010",
-        "${configTrojanPasswordPrefixInput}202011",
-        "${configTrojanPasswordPrefixInput}202012",
-        "${configTrojanPasswordPrefixInput}202013",
-        "${configTrojanPasswordPrefixInput}202014",
-        "${configTrojanPasswordPrefixInput}202015",
-        "${configTrojanPasswordPrefixInput}202016",
-        "${configTrojanPasswordPrefixInput}202017",
-        "${configTrojanPasswordPrefixInput}202018",
-        "${configTrojanPasswordPrefixInput}202019",
-        "${configTrojanPasswordPrefixInput}202020",
-        "${configTrojanPasswordPrefixInput}202021",
-        "${configTrojanPasswordPrefixInput}202022",
-        "${configTrojanPasswordPrefixInput}202023",
-        "${configTrojanPasswordPrefixInput}202024",
-        "${configTrojanPasswordPrefixInput}202025",
-        "${configTrojanPasswordPrefixInput}202026",
-        "${configTrojanPasswordPrefixInput}202027",
-        "${configTrojanPasswordPrefixInput}202028",
-        "${configTrojanPasswordPrefixInput}202029",
-        "${configTrojanPasswordPrefixInput}202030",
-        "${configTrojanPasswordPrefixInput}202031",
-        "${configTrojanPasswordPrefixInput}202032",
-        "${configTrojanPasswordPrefixInput}202033",
-        "${configTrojanPasswordPrefixInput}202034",
-        "${configTrojanPasswordPrefixInput}202035",
-        "${configTrojanPasswordPrefixInput}202036",
-        "${configTrojanPasswordPrefixInput}202037",
-        "${configTrojanPasswordPrefixInput}202038",
-        "${configTrojanPasswordPrefixInput}202039",
-        "${configTrojanPasswordPrefixInput}202040",
-        "${configTrojanPasswordPrefixInput}202041",
-        "${configTrojanPasswordPrefixInput}202042",
-        "${configTrojanPasswordPrefixInput}202043",
-        "${configTrojanPasswordPrefixInput}202044",
-        "${configTrojanPasswordPrefixInput}202045",
-        "${configTrojanPasswordPrefixInput}202046",
-        "${configTrojanPasswordPrefixInput}202047",
-        "${configTrojanPasswordPrefixInput}202048",
-        "${configTrojanPasswordPrefixInput}202049",
-        "${configTrojanPasswordPrefixInput}202050",
-        "${configTrojanPasswordPrefixInput}202051",
-        "${configTrojanPasswordPrefixInput}202052",
-        "${configTrojanPasswordPrefixInput}202053",
-        "${configTrojanPasswordPrefixInput}202054",
-        "${configTrojanPasswordPrefixInput}202055",
-        "${configTrojanPasswordPrefixInput}202056",
-        "${configTrojanPasswordPrefixInput}202057",
-        "${configTrojanPasswordPrefixInput}202058",
-        "${configTrojanPasswordPrefixInput}202059",
-        "${configTrojanPasswordPrefixInput}202060",
-        "${configTrojanPasswordPrefixInput}202061",
-        "${configTrojanPasswordPrefixInput}202062",
-        "${configTrojanPasswordPrefixInput}202063",
-        "${configTrojanPasswordPrefixInput}202064",
-        "${configTrojanPasswordPrefixInput}202065",
-        "${configTrojanPasswordPrefixInput}202066",
-        "${configTrojanPasswordPrefixInput}202067",
-        "${configTrojanPasswordPrefixInput}202068",
-        "${configTrojanPasswordPrefixInput}202069",
-        "${configTrojanPasswordPrefixInput}202070",
-        "${configTrojanPasswordPrefixInput}202071",
-        "${configTrojanPasswordPrefixInput}202072",
-        "${configTrojanPasswordPrefixInput}202073",
-        "${configTrojanPasswordPrefixInput}202074",
-        "${configTrojanPasswordPrefixInput}202075",
-        "${configTrojanPasswordPrefixInput}202076",
-        "${configTrojanPasswordPrefixInput}202077",
-        "${configTrojanPasswordPrefixInput}202078",
-        "${configTrojanPasswordPrefixInput}202079",
-        "${configTrojanPasswordPrefixInput}202080",
-        "${configTrojanPasswordPrefixInput}202081",
-        "${configTrojanPasswordPrefixInput}202082",
-        "${configTrojanPasswordPrefixInput}202083",
-        "${configTrojanPasswordPrefixInput}202084",
-        "${configTrojanPasswordPrefixInput}202085",
-        "${configTrojanPasswordPrefixInput}202086",
-        "${configTrojanPasswordPrefixInput}202087",
-        "${configTrojanPasswordPrefixInput}202088",
-        "${configTrojanPasswordPrefixInput}202089",
-        "${configTrojanPasswordPrefixInput}202090",
-        "${configTrojanPasswordPrefixInput}202091",
-        "${configTrojanPasswordPrefixInput}202092",
-        "${configTrojanPasswordPrefixInput}202093",
-        "${configTrojanPasswordPrefixInput}202094",
-        "${configTrojanPasswordPrefixInput}202095",
-        "${configTrojanPasswordPrefixInput}202096",
-        "${configTrojanPasswordPrefixInput}202097",
-        "${configTrojanPasswordPrefixInput}202098",
         "${configTrojanPasswordPrefixInput}202099"
     ],
     "log_level": 1,
@@ -1326,61 +1118,6 @@ EOF
     rm -rf ${configTrojanBasePath}/trojan-win-cli-temp
     mkdir -p ${configTrojanBasePath}/trojan-win-cli-temp
 
-    downloadAndUnzip "https://github.com/jinwyp/one_click_script/raw/master/download/trojan-win-cli.zip" "${configTrojanBasePath}" "trojan-win-cli.zip"
-
-    if [ "$isTrojanGo" = "no" ] ; then
-        downloadAndUnzip "https://github.com/trojan-gfw/trojan/releases/download/v${versionTrojan}/trojan-${versionTrojan}-win.zip" "${configTrojanBasePath}/trojan-win-cli-temp" "trojan-${versionTrojan}-win.zip"
-        mv -f ${configTrojanBasePath}/trojan-win-cli-temp/trojan/trojan.exe ${configTrojanBasePath}/trojan-win-cli/
-        mv -f ${configTrojanBasePath}/trojan-win-cli-temp/trojan/VC_redist.x64.exe ${configTrojanBasePath}/trojan-win-cli/
-    fi
-
-    if [ "$isTrojanGo" = "yes" ] ; then
-        downloadAndUnzip "https://github.com/p4gefau1t/trojan-go/releases/download/v${versionTrojanGo}/trojan-go-windows-amd64.zip" "${configTrojanBasePath}/trojan-win-cli-temp" "trojan-go-windows-amd64.zip"
-        mv -f ${configTrojanBasePath}/trojan-win-cli-temp/* ${configTrojanBasePath}/trojan-win-cli/
-    fi
-
-    rm -rf ${configTrojanBasePath}/trojan-win-cli-temp
-    cp ${configSSLCertPath}/fullchain.cer ${configTrojanBasePath}/trojan-win-cli/fullchain.cer
-
-    cat > ${configTrojanBasePath}/trojan-win-cli/config.json <<-EOF
-{
-    "run_type": "client",
-    "local_addr": "127.0.0.1",
-    "local_port": 1080,
-    "remote_addr": "${configSSLDomain}",
-    "remote_port": 443,
-    "password": [
-        "${trojanPassword1}"
-    ],
-    "log_level": 1,
-    "ssl": {
-        "verify": true,
-        "verify_hostname": true,
-        "cert": "fullchain.cer",
-        "cipher_tls13":"TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
-	    "sni": "",
-        "alpn": [
-            "h2",
-            "http/1.1"
-        ],
-        "reuse_session": true,
-        "session_ticket": false,
-        "curves": ""
-    },
-    "tcp": {
-        "no_delay": true,
-        "keep_alive": true,
-        "fast_open": false,
-        "fast_open_qlen": 20
-    }
-}
-EOF
-
-    zip -r ${configWebsiteDownloadPath}/trojan-win-cli.zip ${configTrojanBasePath}/trojan-win-cli/
-
-
-
-
     # 设置 cron 定时任务
     # https://stackoverflow.com/questions/610839/how-can-i-programmatically-create-a-new-cron-job
 
@@ -1400,18 +1137,6 @@ EOF
 	blue  "----------------------------------------"
 	yellow "Trojan${promptInfoTrojanName} 配置信息如下, 请自行复制保存, 密码任选其一 !"
 	yellow "服务器地址: ${configSSLDomain}  端口: 443"
-	yellow "密码1: ${trojanPassword1}"
-	yellow "密码2: ${trojanPassword2}"
-	yellow "密码3: ${trojanPassword3}"
-	yellow "密码4: ${trojanPassword4}"
-	yellow "密码5: ${trojanPassword5}"
-	yellow "密码6: ${trojanPassword6}"
-	yellow "密码7: ${trojanPassword7}"
-	yellow "密码8: ${trojanPassword8}"
-	yellow "密码9: ${trojanPassword9}"
-	yellow "密码10: ${trojanPassword10}"
-	yellow "您指定前缀的密码若干: 从 ${configTrojanPasswordPrefixInput}202010 到 ${configTrojanPasswordPrefixInput}202099 都可以使用"
-
     if [[ ${isTrojanGoSupportWebsocket} == "true" ]]; then
         yellow "Websocket path 路径为: /${configTrojanGoWebSocketPath}"
         # yellow "Websocket obfuscation_password 混淆密码为: ${trojanPasswordWS}"
@@ -1420,39 +1145,7 @@ EOF
 
 	blue  "----------------------------------------"
 	green "======================================================================"
-	green "请下载相应的trojan客户端:"
-	yellow "1 Windows 客户端下载：http://${configSSLDomain}/download/${configTrojanWindowsCliPrefixPath}/trojan-windows.zip"
-	yellow "  Windows 客户端另一个版本下载：http://${configSSLDomain}/download/${configTrojanWindowsCliPrefixPath}/trojan-Qt5-windows.zip"
-	yellow "  Windows 客户端命令行版本下载：http://${configSSLDomain}/download/${configTrojanWindowsCliPrefixPath}/trojan-win-cli.zip"
-	yellow "  Windows 客户端命令行版本需要搭配浏览器插件使用，例如switchyomega等! "
-    yellow "2 MacOS 客户端下载：http://${configSSLDomain}/download/${configTrojanWindowsCliPrefixPath}/trojan-mac.zip"
-    yellow "  MacOS 客户端Trojan-Qt5下载：http://${configSSLDomain}/download/${configTrojanWindowsCliPrefixPath}/trojan-Qt5-mac.zip"
-    yellow "3 Android 客户端下载 https://github.com/trojan-gfw/igniter/releases "
-    yellow "4 iOS 客户端 请安装小火箭 https://shadowsockshelp.github.io/ios/ "
-    yellow "  iOS 请安装小火箭另一个地址 https://lueyingpro.github.io/shadowrocket/index.html "
-    yellow "  iOS 安装小火箭遇到问题 教程 https://github.com/shadowrocketHelp/help/ "
-    green "======================================================================"
-	green "教程与其他资源:"
-	green "访问 https://www.v2rayssr.com/trojan-1.html ‎ 下载 浏览器插件 客户端 及教程"
-	green "访问 https://westworldss.com/portal/page/download ‎ 下载 客户端 及教程"
-	green "======================================================================"
-	green "其他 Windows 客户端:"
-	green "https://github.com/TheWanderingCoel/Trojan-Qt5/releases (exe为Win客户端, dmg为Mac客户端)"
-	green "https://github.com/Qv2ray/Qv2ray/releases (exe为Win客户端, dmg为Mac客户端)"
-	green "https://github.com/Dr-Incognito/V2Ray-Desktop/releases (exe为Win客户端, dmg为Mac客户端)"
-	green "https://github.com/Fndroid/clash_for_windows_pkg/releases"
-	green "======================================================================"
-	green "其他 Mac 客户端:"
-	green "https://github.com/TheWanderingCoel/Trojan-Qt5/releases (exe为Win客户端, dmg为Mac客户端)"
-	green "https://github.com/Qv2ray/Qv2ray/releases (exe为Win客户端, dmg为Mac客户端)"
-	green "https://github.com/Dr-Incognito/V2Ray-Desktop/releases (exe为Win客户端, dmg为Mac客户端)"
-	green "https://github.com/JimLee1996/TrojanX/releases (exe为Win客户端, dmg为Mac客户端)"
-	green "https://github.com/yichengchen/clashX/releases "
-	green "======================================================================"
-	green "其他 Android 客户端:"
-	green "https://github.com/trojan-gfw/igniter/releases "
-	green "https://github.com/Kr328/ClashForAndroid/releases "
-	green "======================================================================"
+	green "END"
 }
 
 
