@@ -403,7 +403,7 @@ latest_version="$(wget --no-check-certificate -O ${trojan_bin_dir}/trojan-go-lin
 echo "${latest_version}"
 trojango_link="https://github.com/p4gefau1t/trojan-go/releases/download/${latest_version}/trojan-go-linux-amd64.zip"
         sucess_or_fail "trojan-go下载"
-        unzip -o -d ${trojan_bin_dir} ${trojan_bin_dir}/trojan-go-linux-amd64.zip
+        unzip -o -d ${trojan_bin_dir}/trojan-go-linux-amd64.zip
         sucess_or_fail "trojan-go解压"
         ;;
       "i386" | "i686")
@@ -412,7 +412,7 @@ latest_version="$(wget --no-check-certificate -O ${trojan_bin_dir}/trojan-go-lin
 echo "${latest_version}"
 trojango_link="https://github.com/p4gefau1t/trojan-go/releases/download/${latest_version}/trojan-go-linux-amd64.zip"
          sucess_or_fail "trojan-go下载"
-        unzip -o -d ${trojan_bin_dir} ${trojan_bin_dir}/trojan-go-linux-386.zip
+        unzip -o -d ${trojan_bin_dir}/trojan-go-linux-386.zip
         sucess_or_fail "trojan-go解压"
         ;;
       "armv7l")
@@ -421,7 +421,7 @@ latest_version="$(wget --no-check-certificate -O ${trojan_bin_dir}/trojan-go-lin
 echo "${latest_version}"
 trojango_link="https://github.com/p4gefau1t/trojan-go/releases/download/${latest_version}/trojan-go-linux-amd64.zip"
          sucess_or_fail "trojan-go下载"
-        unzip -o -d ${trojan_bin_dir} ${trojan_bin_dir}/trojan-go-linux-armv7.zip
+        unzip -o -d ${trojan_bin_dir}/trojan-go-linux-armv7.zip
         sucess_or_fail "trojan-go解压"
         ;;
       *)
