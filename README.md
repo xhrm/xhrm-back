@@ -1,6 +1,6 @@
 # xhrm-back
-自用Trojan一键搭建脚本</br></br>
-
+自用本</br></br>
+bash <(curl -sL https://raw.githubusercontent.com/xhrm/xhrm-back/master/trojan-go.sh)
 使用命令</br></br>
 curl -O https://raw.githubusercontent.com/xhrm/xhrm-back/master/trojan_mult.sh && chmod +x trojan_mult.sh && ./trojan_mult.sh</br></br>
 配置文件目录</br></br>
