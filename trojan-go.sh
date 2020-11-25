@@ -793,10 +793,8 @@ showLog() {
 
 menu() {
     clear
-    echo "#############################################################"
-    echo -e "#                    ${RED}trojan-go一键安装脚本${PLAIN}                  #"
-    echo -e "# ${GREEN}网址${PLAIN}: https://xhrm  #"
-    echo "#############################################################"
+    echo -e "#trojan-go一键安装脚本"
+    echo -e "#: https://xhrm#"
     echo ""
 
     echo -e "  ${GREEN}1.${PLAIN}  安装trojan-go"
