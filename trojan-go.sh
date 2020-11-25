@@ -243,7 +243,7 @@ getData() {
     echo "   2) 自定义反代站点(需以http或者https开头)"
     read -p "  请选择伪装网站类型[默认:xhrm]" answer
     if [[ -z "$answer" ]]; then
-        PROXY_URL="https://xhrm.org
+        PROXY_URL="https://xhrm.org"
     else
         case $answer in
         1)
