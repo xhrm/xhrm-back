@@ -250,22 +250,6 @@ getData() {
             PROXY_URL=""
             ;;
         2)
-            len=${#SITES[@]}
-            ((len--))
-            while true
-            do
-                index=`shuf -i0-${len} -n1`
-                PROXY_URL=${SITES[$index]}
-                host=`echo ${PROXY_URL} | cut -d/ -f3`
-                ip=`curl -s https://hijk.art/hostip.php?d=${host}`
-                res=`echo -n ${ip} | grep ${host}`
-                if [[ "${res}" = "" ]]; then
-                    echo "$ip $host" >> /etc/hosts
-                    break
-                fi
-            done
-            ;;
-        3)
             read -p " 请输入反代站点(以http或者https开头)：" PROXY_URL
             if [[ -z "$PROXY_URL" ]]; then
                 colorEcho $RED " 请输入反代网站！"
