@@ -11,9 +11,26 @@ PLAIN='\033[0m'
 
 OS=`hostnamectl | grep -i system | cut -d: -f2`
 
+V6_PROXY=""
+IP=`curl -sL -4 ip.sb`
+if [[ "$?" != "0" ]]; then
+    IP=`curl -sL -6 ip.sb`
+    V6_PROXY="https://gh.hijk.art/"
+fi
+
+BT="false"
+NGINX_CONF_PATH="/etc/nginx/conf.d/"
+
+res=`which bt 2>/dev/null`
+if [[ "$res" != "" ]]; then
+    BT="true"
+    NGINX_CONF_PATH="/www/server/panel/vhost/nginx/"
+fi
+
 # 以下网站是随机从Google上找到的无广告小说网站，不喜欢请改成其他网址，以http或https开头
+# 搭建好后无法打开伪装域名，可能是反代小说网站挂了，请在网站留言，或者Github发issue，以便替换新的网站
 SITES=(
-https://xhrm.org
+https://xhrm.org/
 )
 
 ZIP_FILE="trojan-go"
@@ -32,9 +49,9 @@ checkSystem() {
         exit 1
     fi
 
-    res=`which yum`
+    res=`which yum 2>/dev/null`
     if [[ "$?" != "0" ]]; then
-        res=`which apt`
+        res=`which apt 2>/dev/null`
         if [[ "$?" != "0" ]]; then
             echo -e " ${RED}不受支持的Linux系统${PLAIN}"
             exit 1
@@ -42,14 +59,14 @@ checkSystem() {
         PMT="apt"
         CMD_INSTALL="apt install -y "
         CMD_REMOVE="apt remove -y "
-        CMD_UPGRADE="apt update && apt upgrade -y"
+        CMD_UPGRADE="apt update; apt upgrade -y; apt autoremove -y"
     else
         PMT="yum"
         CMD_INSTALL="yum install -y "
         CMD_REMOVE="yum remove -y "
         CMD_UPGRADE="yum update -y"
     fi
-    res=`which systemctl`
+    res=`which systemctl 2>/dev/null`
     if [[ "$?" != "0" ]]; then
         echo -e " ${RED}系统版本过低，请升级到最新版本${PLAIN}"
         exit 1
@@ -91,7 +108,7 @@ statusText() {
 }
 
 getVersion() {
-    VERSION=$(curl -fsSL https://api.github.com/repos/p4gefau1t/trojan-go/releases | grep tag_name | sed -E 's/.*"v(.*)".*/\1/'| head -n1)
+    VERSION=`curl -fsSL ${V6_PROXY}https://api.github.com/repos/p4gefau1t/trojan-go/releases | grep tag_name | sed -E 's/.*"v(.*)".*/\1/'| head -n1`
     if [[ ${VERSION:0:1} != "v" ]];then
         VERSION="v${VERSION}"
     fi
@@ -138,10 +155,9 @@ archAffix() {
 }
 
 getData() {
+    echo ""
     can_change=$1
     if [[ "$can_change" != "yes" ]]; then
-        IP=`curl -s -4 ip.sb`
-        echo " "
         echo " trojan-go一键脚本，运行之前请确认如下条件已经具备："
         echo -e "  ${RED}1. 一个伪装域名${PLAIN}"
         echo -e "  ${RED}2. 伪装域名DNS解析指向当前服务器ip（${IP}）${PLAIN}"
@@ -152,6 +168,7 @@ getData() {
             exit 0
         fi
 
+        echo ""
         while true
         do
             read -p " 请输入伪装域名：" DOMAIN
@@ -161,17 +178,16 @@ getData() {
                 break
             fi
         done
-        echo -e " 伪装域名(host)：${RED}$DOMAIN${PLAIN}"
+        colorEcho $BLUE " 伪装域名(host)：$DOMAIN"
+
         echo ""
-        
         DOMAIN=${DOMAIN,,}
         if [[ -f ~/trojan-go.pem && -f ~/trojan-go.key ]]; then
             echo -e "${GREEN} 检测到自有证书，将使用其部署${PLAIN}"
-            echo 
             CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
             KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
         else
-            resolve=`curl -s https://v2raytech.com/hostip.php?d=${DOMAIN}`
+            resolve=`curl -sL https://hijk.art/hostip.php?d=${DOMAIN}`
             res=`echo -n ${resolve} | grep ${IP}`
             if [[ -z "${res}" ]]; then
                 echo " ${DOMAIN} 解析结果：${resolve}"
@@ -187,12 +203,12 @@ getData() {
         if [[ "${answer,,}" = "y" ]]; then
             WS="true"
         fi
-        echo ""
     fi
 
-    read -p " 请设置trojan密码（不输则随机生成）:" PASSWORD
+    echo ""
+    read -p " 请设置trojan-go密码（不输则随机生成）:" PASSWORD
     [[ -z "$PASSWORD" ]] && PASSWORD=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1`
-    colorEcho $BLUE " trojan密码：$PASSWORD"
+    colorEcho $BLUE " trojan-go密码：$PASSWORD"
     echo ""
     while true
     do
@@ -200,31 +216,32 @@ getData() {
         if [[ ${answer,,} = "n" ]]; then
             break
         fi
-        read -p " 请设置trojan密码（不输则随机生成）:" pass
+        read -p " 请设置trojan-go密码（不输则随机生成）:" pass
         [[ -z "$pass" ]] && pass=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1`
         echo ""
-        colorEcho $BLUE " trojan密码：$pass"
+        colorEcho $BLUE " trojan-go密码：$pass"
         PASSWORD="${PASSWORD}\",\"$pass"
-        echo 
     done
 
     echo ""
-    read -p " 请输入trojan端口[100-65535的一个数字，默认443]：" PORT
+    read -p " 请输入trojan-go端口[100-65535的一个数字，默认443]：" PORT
     [[ -z "${PORT}" ]] && PORT=443
     if [[ "${PORT:0:1}" = "0" ]]; then
         echo -e "${RED}端口不能以0开头${PLAIN}"
         exit 1
     fi
-    echo ""
-    colorEcho $BLUE " trojan端口：$PORT"
-    echo 
+    colorEcho $BLUE " trojan-go端口：$PORT"
 
     if [[ ${WS} = "true" ]]; then
+        echo ""
         while true
         do
             read -p " 请输入伪装路径，以/开头：" WSPATH
             if [[ -z "${WSPATH}" ]]; then
-                echo " 请输入伪装路径，以/开头！"
+                len=`shuf -i5-12 -n1`
+                ws=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w $len | head -n 1`
+                WSPATH="/$ws"
+                break
             elif [[ "${WSPATH:0:1}" != "/" ]]; then
                 echo " 伪装路径必须以/开头！"
             elif [[ "${WSPATH}" = "/" ]]; then
@@ -235,13 +252,14 @@ getData() {
         done
         echo ""
         colorEcho $BLUE " ws路径：$WSPATH"
-        echo 
     fi
 
+    echo ""
     colorEcho $BLUE " 请选择伪装站类型:"
     echo "   1) 静态网站(位于/usr/share/nginx/html)"
-    echo "   2) 自定义反代站点(需以http或者https开头)"
-    read -p "  请选择伪装网站类型[默认:xhrm]" answer
+    echo "   2) xhrm.org"
+    echo "   3) 自定义反代站点(需以http或者https开头)"
+    read -p "  请选择伪装网站类型[默认:xhrm.org]" answer
     if [[ -z "$answer" ]]; then
         PROXY_URL="https://xhrm.org"
     else
@@ -250,6 +268,9 @@ getData() {
             PROXY_URL=""
             ;;
         2)
+            PROXY_URL="https://xhrm.org"
+            ;;
+        3)
             read -p " 请输入反代站点(以http或者https开头)：" PROXY_URL
             if [[ -z "$PROXY_URL" ]]; then
                 colorEcho $RED " 请输入反代网站！"
@@ -264,8 +285,9 @@ getData() {
             exit 1
         esac
     fi
+    REMOTE_HOST=`echo ${PROXY_URL} | cut -d/ -f3`
     echo ""
-    colorEcho $BLUE " 伪装域名：$PROXY_URL"
+    colorEcho $BLUE " 伪装网站：$PROXY_URL"
 
     echo ""
     colorEcho $BLUE " 是否允许搜索引擎爬取网站？[默认：不允许]"
@@ -281,82 +303,115 @@ getData() {
     fi
     echo ""
     colorEcho $BLUE " 允许搜索引擎：$ALLOW_SPIDER"
-    echo ""
 
+    echo ""
     read -p " 是否安装BBR(默认安装)?[y/n]:" NEED_BBR
     [[ -z "$NEED_BBR" ]] && NEED_BBR=y
     [[ "$NEED_BBR" = "Y" ]] && NEED_BBR=y
+    colorEcho $BLUE " 安装BBR：$NEED_BBR"
 }
 
 installNginx() {
-    if [[ "$PMT" = "yum" ]]; then
-        $CMD_INSTALL epel-release 
+    echo ""
+    colorEcho $BLUE " 安装nginx..."
+    if [[ "$BT" = "false" ]]; then
+        if [[ "$PMT" = "yum" ]]; then
+            $CMD_INSTALL epel-release 
+        fi
+        $CMD_INSTALL nginx
+        systemctl enable nginx
+    else
+        res=`which nginx 2>/dev/null`
+        if [[ "$?" != "0" ]]; then
+            colorEcho $RED " 您安装了宝塔，请在宝塔后台安装nginx后再运行本脚本"
+            exit 1
+        fi
     fi
-    $CMD_INSTALL nginx
-    systemctl enable nginx
-    systemctl stop nginx
-    res=`netstat -ntlp| grep -E ':80|:443'`
-    if [[ "${res}" != "" ]]; then
-        echo -e "${RED} 其他进程占用了80或443端口，请先关闭再运行一键脚本${PLAIN}"
-        echo " 端口占用信息如下："
-        echo ${res}
-        exit 1
+}
+
+startNginx() {
+    if [[ "$BT" = "false" ]]; then
+        systemctl start nginx
+    else
+        nginx -c /www/server/nginx/conf/nginx.conf
+    fi
+}
+
+stopNginx() {
+    if [[ "$BT" = "false" ]]; then
+        systemctl stop nginx
+    else
+        res=`ps aux | grep -i nginx`
+        if [[ "$res" != "" ]]; then
+            nginx -s stop
+        fi
     fi
 }
 
 getCert() {
+    mkdir -p /etc/trojan-go
     if [[ -z ${CERT_FILE+x} ]]; then
-        res=`which pip3`
-        if [[ "$?" != "0" ]]; then
-            $CMD_INSTALL python3 python3-setuptools python3-pip
-        fi
-        res=`which pip3`
-        if [[ "$?" != "0" ]]; then
-            echo -e " $OS pip3安装失败"
-            exit 1
-        fi
-        pip3 install --upgrade pip
-        pip3 install wheel
-        res=`pip3 list | grep crypto | awk '{print $2}'`
-        if [[ "$res" < "2.8" ]]; then
-            pip3 uninstall -y cryptography
-            cd /usr/lib/python3/dist-packages
-            rm -r cryptoggraphy cryptography-2.1.4.egg-info
-            pip3 install cryptography
-            cd -
-        fi
-        pip3 install certbot
-        res=`which certbot`
-        if [[ "$?" != "0" ]]; then
-            export PATH=$PATH:/usr/local/bin
-        fi
-        certbot certonly --standalone --agree-tos --register-unsafely-without-email -d ${DOMAIN}
-        if [[ "$?" != "0" ]]; then
-            echo -e " $OS 获取证书失败"
+        stopNginx
+        systemctl stop trojan-go
+        sleep 2
+        res=`ss -ntlp| grep -E ':80 |:443 '`
+        if [[ "${res}" != "" ]]; then
+            echo -e "${RED} 其他进程占用了80或443端口，请先关闭再运行一键脚本${PLAIN}"
+            echo " 端口占用信息如下："
+            echo ${res}
             exit 1
         fi
 
-        CERT_FILE="/etc/letsencrypt/archive/${DOMAIN}/fullchain1.pem"
-        KEY_FILE="/etc/letsencrypt/archive/${DOMAIN}/privkey1.pem"
+        $CMD_INSTALL socat openssl
+        if [[ "$PMT" = "yum" ]]; then
+            $CMD_INSTALL cronie
+            systemctl start crond
+            systemctl enable crond
+        else
+            $CMD_INSTALL cron
+            systemctl start cron
+            systemctl enable cron
+        fi
+        curl -sL https://get.acme.sh | sh
+        source ~/.bashrc
+        ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
+        ~/.acme.sh/acme.sh   --issue -d $DOMAIN --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx"  --standalone
+        CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
+        KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
+        ~/.acme.sh/acme.sh  --install-cert -d $DOMAIN \
+            --key-file       $KEY_FILE  \
+            --fullchain-file $CERT_FILE \
+            --reloadcmd     "service nginx force-reload"
+        [[ -f $CERT_FILE && -f $KEY_FILE ]] || {
+            colorEcho $RED " 获取证书失败，请到 https://hijk.art 反馈"
+            exit 1
+        }
+    else
+        cp ~/trojan-go.pem /etc/trojan-go/${DOMAIN}.pem
+        cp ~/trojan-go.key /etc/trojan-go/${DOMAIN}.key
     fi
 }
 
 configNginx() {
-    if [[ ! -f /etc/nginx/nginx.conf.bak ]]; then
-        mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
-    fi
-    res=`id nginx`
-    if [[ "$?" != "0" ]]; then
-        user="www-data"
-    else
-        user="nginx"
-    fi
     mkdir -p /usr/share/nginx/html
     if [[ "$ALLOW_SPIDER" = "n" ]]; then
         echo 'User-Agent: *' > /usr/share/nginx/html/robots.txt
         echo 'Disallow: /' >> /usr/share/nginx/html/robots.txt
+        ROBOT_CONFIG="    location = /robots.txt {}"
+    else
+        ROBOT_CONFIG=""
     fi
-    cat > /etc/nginx/nginx.conf<<-EOF
+    if [[ "$BT" = "false" ]]; then
+        if [[ ! -f /etc/nginx/nginx.conf.bak ]]; then
+            mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
+        fi
+        res=`id nginx 2>/dev/null`
+        if [[ "$?" != "0" ]]; then
+            user="www-data"
+        else
+            user="nginx"
+        fi
+        cat > /etc/nginx/nginx.conf<<-EOF
 user $user;
 worker_processes auto;
 error_log /var/log/nginx/error.log;
@@ -393,20 +448,25 @@ http {
     include /etc/nginx/conf.d/*.conf;
 }
 EOF
+    fi
 
-    mkdir -p /etc/nginx/conf.d
+    mkdir -p $NGINX_CONF_PATH
     if [[ "$PROXY_URL" = "" ]]; then
-        cat > /etc/nginx/conf.d/${DOMAIN}.conf<<-EOF
+        cat > $NGINX_CONF_PATH${DOMAIN}.conf<<-EOF
 server {
     listen 80;
+    listen [::]:80;
     server_name ${DOMAIN};
     root /usr/share/nginx/html;
+
+    $ROBOT_CONFIG
 }
 EOF
     else
-        cat > /etc/nginx/conf.d/${DOMAIN}.conf<<-EOF
+        cat > $NGINX_CONF_PATH${DOMAIN}.conf<<-EOF
 server {
     listen 80;
+    listen [::]:80;
     server_name ${DOMAIN};
     root /usr/share/nginx/html;
     location / {
@@ -417,20 +477,15 @@ server {
         sub_filter_once off;
     }
     
-    location = /robots.txt {
-    }
+    $ROBOT_CONFIG
 }
 EOF
     fi
-
-    certbotpath=`which certbot`
-    echo "0 3 1 */2 0 root systemctl stop nginx ; ${certbotpath} renew; systemctl restart nginx" >> /etc/crontab
-    systemctl enable nginx
 }
 
 downloadFile() {
     SUFFIX=`archAffix`
-    DOWNLOAD_URL="https://github.com/p4gefau1t/trojan-go/releases/download/${VERSION}/trojan-go-linux-${SUFFIX}.zip"
+    DOWNLOAD_URL="${V6_PROXY}https://github.com/p4gefau1t/trojan-go/releases/download/${VERSION}/trojan-go-linux-${SUFFIX}.zip"
     wget -O /tmp/${ZIP_FILE}.zip $DOWNLOAD_URL
     if [[ ! -f /tmp/${ZIP_FILE}.zip ]]; then
         echo -e "{$RED} trojan-go安装文件下载失败，请检查网络或重试${PLAIN}"
@@ -448,19 +503,16 @@ installTrojan() {
 
     systemctl enable trojan-go
     rm -rf /tmp/${ZIP_FILE}
+
+    colorEcho $BLUE " trojan-go安装成功！"
 }
 
 configTrojan() {
-    rm -rf /etc/trojan-go
     mkdir -p /etc/trojan-go
-    if [[ -f ~/trojan-go.pem ]]; then
-        cp ~/trojan-go.pem /etc/trojan-go/${DOMAIN}.pem
-        cp ~/trojan-go.key /etc/trojan-go/${DOMAIN}.key
-    fi
     cat > $CONFIG_FILE <<-EOF
 {
     "run_type": "server",
-    "local_addr": "0.0.0.0",
+    "local_addr": "::",
     "local_port": ${PORT},
     "remote_addr": "127.0.0.1",
     "remote_port": 80,
@@ -515,7 +567,7 @@ setSelinux() {
 }
 
 setFirewall() {
-    res=`which firewall-cmd`
+    res=`which firewall-cmd 2>/dev/null`
     if [[ $? -eq 0 ]]; then
         systemctl status firewalld > /dev/null 2>&1
         if [[ $? -eq 0 ]];then
@@ -536,7 +588,7 @@ setFirewall() {
             fi
         fi
     else
-        res=`which iptables`
+        res=`which iptables 2>/dev/null`
         if [[ $? -eq 0 ]]; then
             nl=`iptables -nL | nl | grep FORWARD | awk '{print $1}'`
             if [[ "$nl" != "3" ]]; then
@@ -547,7 +599,7 @@ setFirewall() {
                 fi
             fi
         else
-            res=`which ufw`
+            res=`which ufw 2>/dev/null`
             if [[ $? -eq 0 ]]; then
                 res=`ufw status | grep -i inactive`
                 if [[ "$res" = "" ]]; then
@@ -571,8 +623,6 @@ installBBR() {
     if [[ "$result" != "" ]]; then
         echo " BBR模块已安装"
         INSTALL_BBR=false
-        echo "3" > /proc/sys/net/ipv4/tcp_fastopen
-        echo "net.ipv4.tcp_fastopen = 3" >> /etc/sysctl.conf
         return
     fi
     res=`hostnamectl | grep -i openvz`
@@ -584,7 +634,6 @@ installBBR() {
     
     echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
     echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_fastopen = 3" >> /etc/sysctl.conf
     sysctl -p
     result=$(lsmod | grep bbr)
     if [[ "$result" != "" ]]; then
@@ -593,32 +642,42 @@ installBBR() {
         return
     fi
 
-    echo " 安装BBR模块..."
+    colorEcho $BLUE " 安装BBR模块..."
     if [[ "$PMT" = "yum" ]]; then
-        rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
-        rpm -Uvh http://www.elrepo.org/elrepo-release-7.0-4.el7.elrepo.noarch.rpm
-        yum --enablerepo=elrepo-kernel install kernel-ml -y
-        grub2-set-default 0
+        if [[ "$V6_PROXY" = "" ]]; then
+            rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
+            rpm -Uvh http://www.elrepo.org/elrepo-release-7.0-4.el7.elrepo.noarch.rpm
+            $CMD_INSTALL --enablerepo=elrepo-kernel kernel-ml
+            $CMD_REMOVE kernel-3.*
+            grub2-set-default 0
+            echo "tcp_bbr" >> /etc/modules-load.d/modules.conf
+            INSTALL_BBR=true
+        fi
     else
         $CMD_INSTALL --install-recommends linux-generic-hwe-16.04
         grub-set-default 0
+        echo "tcp_bbr" >> /etc/modules-load.d/modules.conf
+        INSTALL_BBR=true
     fi
-    echo "tcp_bbr" >> /etc/modules-load.d/modules.conf
-    INSTALL_BBR=true
 }
 
 install() {
-    $CMD_UPGRADE
-    $CMD_INSTALL wget net-tools unzip vim
-    res=`which unzip`
+    getData
+
+    $PMT clean all
+    [[ "$PMT" = "apt" ]] && $PMT update
+    #echo $CMD_UPGRADE | bash
+    $CMD_INSTALL wget vim unzip tar gcc openssl
+    $CMD_INSTALL net-tools
+    if [[ "$PMT" = "apt" ]]; then
+        $CMD_INSTALL libssl-dev g++
+    fi
+    res=`which unzip 2>/dev/null`
     if [[ $? -ne 0 ]]; then
         echo -e " ${RED}unzip安装失败，请检查网络${PLAIN}"
         exit 1
     fi
 
-    getData
-
-    echo " 安装nginx..."
     installNginx
     setFirewall
     getCert
@@ -635,6 +694,8 @@ install() {
 
     start
     showInfo
+
+    bbrReboot
 }
 
 bbrReboot() {
@@ -662,10 +723,10 @@ update() {
 
     stop
     start
-    showInfo
 }
 
 uninstall() {
+    echo ""
     read -p " 确定卸载trojan-go？[y/n]：" answer
     if [[ "${answer,,}" = "y" ]]; then
         domain=`grep sni $CONFIG_FILE | cut -d\" -f4`
@@ -676,43 +737,48 @@ uninstall() {
         systemctl disable trojan-go
         rm -rf /etc/systemd/system/trojan-go.service
 
-        systemctl disable nginx
-        $CMD_REMOVE nginx
-        rm -rf /etc/nginx/nginx.conf
-        if [[ -f /etc/nginx/nginx.conf.bak ]]; then
-            mv /etc/nginx/nginx.conf.bak /etc/nginx/nginx.conf
+        if [[ "$BT" = "false" ]]; then
+            systemctl disable nginx
+            $CMD_REMOVE nginx
+            if [[ "$PMT" = "apt" ]]; then
+                $CMD_REMOVE nginx-common
+            fi
+            rm -rf /etc/nginx/nginx.conf
+            if [[ -f /etc/nginx/nginx.conf.bak ]]; then
+                mv /etc/nginx/nginx.conf.bak /etc/nginx/nginx.conf
+            fi
         fi
 
-        rm -rf /etc/nginx/conf.d/${domain}.conf
+        rm -rf $NGINX_CONF_PATH${domain}.conf
+        ~/.acme.sh/acme.sh --uninstall
         echo -e " ${GREEN}trojan-go卸载成功${PLAIN}"
     fi
 }
 
-run() {
+start() {
     res=`status`
     if [[ $res -lt 2 ]]; then
         echo -e "${RED}trojan-go未安装，请先安装！${PLAIN}"
         return
     fi
 
-    res=`ss -ntlp| grep trojan-go`
-    if [[ "$res" != "" ]]; then
-        return
-    fi
-
-    start
-    showInfo
-}
-
-start() {
-    systemctl restart nginx
+    stopNginx
+    startNginx
     systemctl restart trojan-go
-    sleep 3
+    sleep 2
+    port=`grep local_port $CONFIG_FILE|cut -d: -f2| tr -d \",' '`
+    res=`ss -ntlp| grep ${port} | grep trojan-go`
+    if [[ "$res" = "" ]]; then
+        colorEcho $RED " trojan-go启动失败，请检查端口是否被占用！"
+    else
+        colorEcho $BLUE " trojan-go启动成功"
+    fi
 }
 
 stop() {
-    systemctl stop nginx
+    stopNginx
     systemctl stop trojan-go
+    colorEcho $BLUE " trojan-go停止成功"
 }
 
 
@@ -740,6 +806,8 @@ reconfig() {
     getData true
     configTrojan
     setFirewall
+    getCert
+    configNginx
     stop
     start
     showInfo
@@ -755,7 +823,6 @@ showInfo() {
         return
     fi
 
-    ip=`curl -s -4 ip.sb`
     domain=`grep sni $CONFIG_FILE | cut -d\" -f4`
     port=`grep local_port $CONFIG_FILE | cut -d: -f2 | tr -d \",' '`
     line1=`grep -n 'password' $CONFIG_FILE  | head -n1 | cut -d: -f1`
@@ -764,19 +831,20 @@ showInfo() {
     line1=`grep -n 'websocket' $CONFIG_FILE  | head -n1 | cut -d: -f1`
     line11=`expr $line1 + 1`
     ws=`sed -n "${line11}p" $CONFIG_FILE | cut -d: -f2 | tr -d \",' '`
-    echo 
-    echo -e "  ${RED}trojan-go配置信息：${PLAIN}"
-    echo 
-    echo -n "  当前状态："
+    echo ""
+    echo -n " trojan-go运行状态："
     statusText
-    echo -e "  IP：${RED}$ip${PLAIN}"
-    echo -e "  伪装域名/主机名(host)：${RED}$domain${PLAIN}"
-    echo -e "  端口(port)：${RED}$port${PLAIN}"
-    echo -e "  密码(password)：${RED}$password${PLAIN}"
+    echo ""
+    echo -e " ${BLUE}trojan-go配置文件: ${PLAIN} ${RED}${CONFIG_FILE}${PLAIN}"
+    echo -e " ${BLUE}trojan-go配置信息：${PLAIN}"
+    echo -e "   IP：${RED}$IP${PLAIN}"
+    echo -e "   伪装域名/主机名(host)：${RED}$domain${PLAIN}"
+    echo -e "   端口(port)：${RED}$port${PLAIN}"
+    echo -e "   密码(password)：${RED}$password${PLAIN}"
     if [[ $ws = "true" ]]; then
-        echo -e "  websocket：${RED}true${PLAIN}"
+        echo -e "   websocket：${RED}true${PLAIN}"
         wspath=`grep path $CONFIG_FILE | cut -d: -f2 | tr -d \",' '`
-        echo -e "  ws路径(ws path)：${RED}${wspath}${PLAIN}"
+        echo -e "   ws路径(ws path)：${RED}${wspath}${PLAIN}"
     fi
     echo ""
 }
@@ -793,22 +861,23 @@ showLog() {
 
 menu() {
     clear
-    echo -e "  "
-    echo -e "Trojan-Go一键安装脚本"
-    echo -e "https://xhrm.org"
-    echo -e "  "
+    echo "#############################################################"
+    echo -e "#                    ${RED}trojan-go一键安装脚本${PLAIN}                  #"
+    echo -e "# ${GREEN}作者${PLAIN}: xhrm                                     #"
+    echo "#############################################################"
     echo ""
+
     echo -e "  ${GREEN}1.${PLAIN}  安装trojan-go"
     echo -e "  ${GREEN}2.${PLAIN}  安装trojan-go+WS"
     echo -e "  ${GREEN}3.${PLAIN}  更新trojan-go"
-    echo -e "  ${GREEN}4.${PLAIN}  卸载trojan-go"
+    echo -e "  ${GREEN}4.  ${RED}卸载trojan-go${PLAIN}"
     echo " -------------"
     echo -e "  ${GREEN}5.${PLAIN}  启动trojan-go"
     echo -e "  ${GREEN}6.${PLAIN}  重启trojan-go"
     echo -e "  ${GREEN}7.${PLAIN}  停止trojan-go"
     echo " -------------"
-    echo -e "  ${GREEN}8.${PLAIN}  查看trojan-go信息"
-    echo -e "  ${GREEN}9.${PLAIN}  修改trojan-go配置"
+    echo -e "  ${GREEN}8.${PLAIN}  查看trojan-go配置"
+    echo -e "  ${GREEN}9.  ${RED}修改trojan-go配置${PLAIN}"
     echo -e "  ${GREEN}10.${PLAIN} 查看trojan-go日志"
     echo " -------------"
     echo -e "  ${GREEN}0.${PLAIN} 退出"
@@ -836,7 +905,7 @@ menu() {
             uninstall
             ;;
         5)
-            run
+            start
             ;;
         6)
             restart
