@@ -824,8 +824,8 @@ function uninstall() {
 menu() {
     clear
     echo "#############################################################"
-    echo -e "# $trojan一键安装脚本${PLAIN}"
-    echo -e "# $xhrm .org"
+    echo -e "# Trojan一键安装脚本$"
+    echo -e "# xhrm .org"
     echo "#############################################################"
     echo ""
 
