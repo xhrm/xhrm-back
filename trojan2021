@@ -25,7 +25,7 @@ if [[ "$res" != "" ]]; then
     NGINX_CONF_PATH="/www/server/panel/vhost/nginx/"
 fi
 
-# 以下网站以http或https开头
+# 搭建好后无法打开伪装域名
 SITES=(
 https://xhrm.org/
 )
@@ -69,11 +69,11 @@ function checkSystem()
 }
 
 status() {
-    trojan_cmd="$(command -v trojan)"
-    if [[ "$trojan_cmd" = "" ]]; then
+    if [[ ! -f /usr/local/bin/trojan ]]; then
         echo 0
         return
     fi
+
     if [[ ! -f $CONFIG_FILE ]]; then
         echo 1
         return
@@ -163,19 +163,16 @@ function getData()
     echo "   1) 静态网站(位于/usr/share/nginx/html)"
     echo "   2) xhrm.org"
     echo "   3) 自定义反代站点(需以http或者https开头)"
-    read -p "  请选择伪装网站类型[默认:xhrm.org]" answer
+    read -p "  请选择伪装网站类型[默认:美女站]" answer
     if [[ -z "$answer" ]]; then
-        PROXY_URL="https://xhrm.org"
+        PROXY_URL="https://imeizi.me"
     else
         case $answer in
         1)
             PROXY_URL=""
             ;;
         2)
-            len=${#SITES[@]}
-            ((len--))
-            index=`shuf -i0-${len} -n1`
-            PROXY_URL=${SITES[$index]}
+            PROXY_URL="https://xhrm.org"
             ;;
         3)
             read -p " 请输入反代站点(以http或者https开头)：" PROXY_URL
@@ -401,7 +398,7 @@ getCert() {
             ~/.acme.sh/acme.sh   --issue -d $DOMAIN --pre-hook "nginx -s stop || { echo -n ''; }" --post-hook "nginx -c /www/server/nginx/conf/nginx.conf || { echo -n ''; }"  --standalone
         fi
         [[ -f ~/.acme.sh/$DOMAIN/ca.cer ]] || {
-            colorEcho $RED " 获取证书失败，请复制上面的红色文字到 https://hijk.art 反馈"
+            colorEcho $RED " 获取证书失败"
             exit 1
         }
         CERT_FILE="/usr/local/etc/trojan/${DOMAIN}.pem"
@@ -411,7 +408,7 @@ getCert() {
             --fullchain-file $CERT_FILE \
             --reloadcmd     "service nginx force-reload"
         [[ -f $CERT_FILE && -f $KEY_FILE ]] || {
-            colorEcho $RED " 获取证书失败，请到 https://hijk.art 反馈"
+            colorEcho $RED " 获取证书失败"
             exit 1
         }
     else
@@ -824,8 +821,8 @@ function uninstall() {
 menu() {
     clear
     echo "#############################################################"
-    echo -e "# Trojan一键安装脚本"
-    echo -e "# xhrm.org"
+    echo -e "Trojan一键安装脚本"
+    echo -e "xhrm.org"
     echo "#############################################################"
     echo ""
 
