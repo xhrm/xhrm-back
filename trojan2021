@@ -389,26 +389,26 @@ getCert() {
             systemctl start cron
             systemctl enable cron
         fi
-        curl -sL https://get.acme.sh | sh
+        curl -sL https://get.acme.sh | sh -s email=hijk.pw@protonmail.ch
         source ~/.bashrc
         ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
         if [[ "$BT" = "false" ]]; then
-            ~/.acme.sh/acme.sh   --issue -d $DOMAIN --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx"  --standalone
+            ~/.acme.sh/acme.sh   --issue -d $DOMAIN --keylength ec-256 --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx"  --standalone
         else
-            ~/.acme.sh/acme.sh   --issue -d $DOMAIN --pre-hook "nginx -s stop || { echo -n ''; }" --post-hook "nginx -c /www/server/nginx/conf/nginx.conf || { echo -n ''; }"  --standalone
+            ~/.acme.sh/acme.sh   --issue -d $DOMAIN --keylength ec-256 --pre-hook "nginx -s stop || { echo -n ''; }" --post-hook "nginx -c /www/server/nginx/conf/nginx.conf || { echo -n ''; }"  --standalone
         fi
-        [[ -f ~/.acme.sh/$DOMAIN/ca.cer ]] || {
-            colorEcho $RED " 获取证书失败"
+        [[ -f ~/.acme.sh/${DOMAIN}_ecc/ca.cer ]] || {
+            colorEcho $RED " 获取证书失败，请复制上面的红色文字到 https://hijk.art 反馈"
             exit 1
         }
         CERT_FILE="/usr/local/etc/trojan/${DOMAIN}.pem"
         KEY_FILE="/usr/local/etc/trojan/${DOMAIN}.key"
-        ~/.acme.sh/acme.sh  --install-cert -d $DOMAIN \
+        ~/.acme.sh/acme.sh  --install-cert -d $DOMAIN --ecc \
             --key-file       $KEY_FILE  \
             --fullchain-file $CERT_FILE \
             --reloadcmd     "service nginx force-reload"
         [[ -f $CERT_FILE && -f $KEY_FILE ]] || {
-            colorEcho $RED " 获取证书失败"
+            colorEcho $RED " 获取证书失败，请到 https://hijk.art 反馈"
             exit 1
         }
     else
@@ -422,9 +422,22 @@ function installNginx()
     colorEcho $BLUE " 安装nginx..."
     if [[ "$BT" = "false" ]]; then
         if [[ "$PMT" = "yum" ]]; then
-            $CMD_INSTALL epel-release 
+            $CMD_INSTALL epel-release
+            if [[ "$?" != "0" ]]; then
+                echo '[nginx-stable]
+name=nginx stable repo
+baseurl=http://nginx.org/packages/centos/$releasever/$basearch/
+gpgcheck=1
+enabled=1
+gpgkey=https://nginx.org/keys/nginx_signing.key
+module_hotfixes=true' > /etc/yum.repos.d/nginx.repo
+            fi
         fi
         $CMD_INSTALL nginx
+        if [[ "$?" != "0" ]]; then
+            colorEcho $RED " Nginx安装失败，请到 https://hijk.art 反馈"
+            exit 1
+        fi
         systemctl enable nginx
     else
         res=`which nginx 2>/dev/null`
@@ -460,7 +473,6 @@ user $user;
 worker_processes auto;
 error_log /var/log/nginx/error.log;
 pid /run/nginx.pid;
-
 # Load dynamic modules. See /usr/share/doc/nginx/README.dynamic.
 include /usr/share/nginx/modules/*.conf;
 
