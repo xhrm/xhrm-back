@@ -836,8 +836,8 @@ function uninstall() {
 menu() {
     clear
     echo "#############################################################"
-    echo -e "#                    ${RED}一键安装脚本${PLAIN}                    #"
-    echo -e "# ${GREEN}作者${PLAIN}: xhrm                                      #"
+    echo -e "                    ${RED}一键安装脚本${PLAIN}                    "
+    echo -e " ${GREEN}作者${PLAIN}: xhrm                                      "
     echo "#############################################################"
     echo ""
 
