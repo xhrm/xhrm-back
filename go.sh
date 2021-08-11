@@ -888,7 +888,7 @@ showLog() {
 menu() {
     clear
     echo "#############################################################"
-    echo -e "#                    ${RED}trojan-go一键安装脚本${PLAIN}                  #"
+    echo -e "${RED}trojan-go一键安装脚本${PLAIN}"
     echo -e "xhrm"
     echo -e "xhrm.org"
     echo "#############################################################"
