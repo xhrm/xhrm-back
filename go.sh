@@ -257,7 +257,7 @@ getData() {
     echo "   1) 静态网站(位于/usr/share/nginx/html)"
     echo "   2) xhrm(https://xhrm.org)"
     echo "   3) 自定义反代站点(需以http或者https开头)"
-    read -p "  请选择伪装网站类型[默认:高清壁纸站]" answer
+    read -p "  请选择伪装网站类型[默认:xhrm]" answer
     if [[ -z "$answer" ]]; then
         PROXY_URL="https://xhrm.org"
     else
