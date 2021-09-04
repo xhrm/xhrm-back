@@ -285,7 +285,7 @@ Type=simple
 StandardError=journal
 ExecStart="$BINARYPATH" "$CONFIGPATH"
 ExecReload=/bin/kill -HUP \$MAINPID
-LimitNOFILE=51200
+LimitNOFILE=infinity
 Restart=on-failure
 RestartSec=1s
 
