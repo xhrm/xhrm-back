@@ -152,9 +152,9 @@ EOF
         latest_version=`grep tag_name latest| awk -F '[:,"v]' '{print $6}'`
         rm -f latest
         green "开始下载最新版trojan-go amd64"
-        wget https://github.com/p4gefau1t/trojan-go/releases/download/v${latest_version}/trojan-go-linux-amd64.tar.xz
-        tar xf trojan-go-linux-amd64.tar.xz >/dev/null 2>&1
-        rm -f trojan-go-linux-amd64.tar.xz
+        wget https://github.com/p4gefau1t/trojan-go/releases/download/v${latest_version}/trojan-go-linux-amd64.zip
+        tar xf trojan-go-linux-amd64.zip >/dev/null 2>&1
+        rm -f trojan-go-linux-amd64.zip
         green "请设置trojan-go密码，建议不要出现特殊字符"
         read -p "请输入密码 :" trojan-go_passwd
         #trojan-go_passwd=$(cat /dev/urandom | head -1 | md5sum | head -c 8)
@@ -501,8 +501,8 @@ function update_trojan-go(){
     if version_lt "$curr_version" "$latest_version"; then
         green "当前版本$curr_version,最新版本$latest_version,开始升级……"
         mkdir trojan-go_update_temp && cd trojan-go_update_temp
-                wget https://github.com/p4gefau1t/trojan-go/releases/download/v${latest_version}/trojan-go-linux-amd64.tar.xz >/dev/null 2>&1
-        tar xf trojan-go-linux-amd64.tar.xz >/dev/null 2>&1
+                wget https://github.com/p4gefau1t/trojan-go/releases/download/v${latest_version}/trojan-go-linux-amd64.zip >/dev/null 2>&1
+        tar xf trojan-go-linux-amd64.zip >/dev/null 2>&1
         mv ./trojan-go/trojan-go /usr/src/trojan-go/
         cd .. && rm -rf trojan-go_update_temp
         systemctl restart trojan-go
