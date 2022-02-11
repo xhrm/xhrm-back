@@ -202,7 +202,6 @@ EOF
     }
 }
 EOF
-        cd /usr/src/trojan-cli/
         rm -rf /usr/src/trojan-temp/
         rm -f /usr/src/trojan-cli.zip
         trojan_path=$(cat /dev/urandom | head -1 | md5sum | head -c 16)
