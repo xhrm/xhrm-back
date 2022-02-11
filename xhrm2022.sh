@@ -158,6 +158,7 @@ EOF
         green "请设置trojan密码，建议不要出现特殊字符"
         read -p "请输入密码 :" trojan_passwd
         #trojan_passwd=$(cat /dev/urandom | head -1 | md5sum | head -c 8)
+ EOF
         rm -rf /usr/src/trojan/server.conf
         cat > /usr/src/trojan/server.conf <<-EOF
 {
