@@ -218,6 +218,7 @@ Type=simple
 PIDFile=/usr/src/trojan/trojan/trojan.pid
 ExecStart=/usr/src/trojan/trojan -c "/usr/src/trojan/server.conf"  
 ExecReload=/bin/kill -HUP \$MAINPID
+LimitNOFILE=infinity
 Restart=on-failure
 RestartSec=1s
    
