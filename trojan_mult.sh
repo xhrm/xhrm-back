@@ -66,7 +66,7 @@ EOF
     rm -rf /usr/share/nginx/html/*
     cd /usr/share/nginx/html/
     wget https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip >/dev/null 2>&1
-    unzip index.zip >/dev/null 2>&1
+    unzip fakesite.zip >/dev/null 2>&1
     sleep 5
     if [ ! -d "/usr/src" ]; then
         mkdir /usr/src
@@ -74,7 +74,12 @@ EOF
     if [ ! -d "/usr/src/trojan-cert" ]; then
         mkdir /usr/src/trojan-cert /usr/src/trojan-temp
         mkdir /usr/src/trojan-cert/$your_domain
+        if [ ! -d "/usr/src/trojan-cert/$your_domain" ]; then
+            red "不存在/usr/src/trojan-cert/$your_domain目录"
+            exit 1
+        fi
         curl https://get.acme.sh | sh
+        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
         if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
             cert_success="1"
@@ -86,6 +91,7 @@ EOF
         minus=$(($now_time - $create_time ))
         if [  $minus -gt 5184000 ]; then
             curl https://get.acme.sh | sh
+            ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
             ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
             if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
                 cert_success="1"
@@ -95,7 +101,9 @@ EOF
             cert_success="1"
         fi        
     else 
+        mkdir /usr/src/trojan-cert/$your_domain
         curl https://get.acme.sh | sh
+        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
         if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
             cert_success="1"
@@ -150,6 +158,7 @@ EOF
         green "请设置trojan密码，建议不要出现特殊字符"
         read -p "请输入密码 :" trojan_passwd
         #trojan_passwd=$(cat /dev/urandom | head -1 | md5sum | head -c 8)
+        cat > /usr/src/trojan-cli/config.json <<-EOF
 EOF
          rm -rf /usr/src/trojan/server.conf
          cat > /usr/src/trojan/server.conf <<-EOF
@@ -196,11 +205,12 @@ EOF
 }
 EOF
         cd /usr/src/trojan-cli/
+        zip -q -r trojan-cli.zip /usr/src/trojan-cli/
         rm -rf /usr/src/trojan-temp/
         rm -f /usr/src/trojan-cli.zip
         trojan_path=$(cat /dev/urandom | head -1 | md5sum | head -c 16)
-        mkdir /usr/share/nginx/html/${trojan_path}
-        mv /usr/src/trojan-cli/trojan-cli.zip /usr/share/nginx/html/${trojan_path}/	
+        #mkdir /usr/share/nginx/html/${trojan_path}
+        #mv /usr/src/trojan-cli/trojan-cli.zip /usr/share/nginx/html/${trojan_path}/	
         cat > ${systempwd}trojan.service <<-EOF
 [Unit]  
 Description=trojan  
@@ -225,13 +235,15 @@ EOF
             --key-file   /usr/src/trojan-cert/$your_domain/private.key \
             --fullchain-file  /usr/src/trojan-cert/$your_domain/fullchain.cer \
             --reloadcmd  "systemctl restart trojan"	
-        green "=========================================================================="
-        green "                         Trojan已安装完成"
-        green "=========================================================================="
+        green "==========================================================================="
+        green "安装完成"
+        green "==========================================================================="
+        echo
+        echo
         green "                          客户端配置文件"
-        green "=========================================================================="
+        green "==========================================================================="
         cat /usr/src/trojan-cli/config.json
-        green "=========================================================================="
+        green "==========================================================================="
     else
         red "==================================="
         red "https证书没有申请成功，本次安装失败"
@@ -263,11 +275,21 @@ function preinstall_check(){
     fi
     if [ -f "/etc/selinux/config" ]; then
         CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
-        if [ "$CHECK" != "SELINUX=disabled" ]; then
-            green "检测到SELinux开启状态，添加放行80/443端口规则"
-            yum install -y policycoreutils-python >/dev/null 2>&1
-            semanage port -a -t http_port_t -p tcp 80
-            semanage port -a -t http_port_t -p tcp 443
+        if [ "$CHECK" == "SELINUX=enforcing" ]; then
+            green "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
+            setenforce 0
+            sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+            #loggreen "SELinux is not disabled, add port 80/443 to SELinux rules."
+            #loggreen "==== Install semanage"
+            #logcmd "yum install -y policycoreutils-python"
+            #semanage port -a -t http_port_t -p tcp 80
+            #semanage port -a -t http_port_t -p tcp 443
+            #semanage port -a -t http_port_t -p tcp 37212
+            #semanage port -a -t http_port_t -p tcp 37213
+        elif [ "$CHECK" == "SELINUX=permissive" ]; then
+            green "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
+            setenforce 0
+            sed -i 's/SELINUX=permissive/SELINUX=disabled/g' /etc/selinux/config
         fi
     fi
     if [ "$release" == "centos" ]; then
@@ -290,7 +312,7 @@ function preinstall_check(){
             firewall-cmd --zone=public --add-port=443/tcp --permanent
             firewall-cmd --reload
         fi
-        rpm -Uvh http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm
+        rpm -Uvh http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm --force --nodeps
     elif [ "$release" == "ubuntu" ]; then
         if  [ -n "$(grep ' 14\.' /etc/os-release)" ] ;then
         red "==============="
@@ -322,7 +344,7 @@ function preinstall_check(){
     fi
     $systemPackage -y install  wget unzip zip curl tar >/dev/null 2>&1
     green "======================="
-    blue "请输入绑定到云服务器的域名"
+    blue "请输入绑定到本云服务器的域名"
     green "======================="
     read your_domain
     real_addr=`ping ${your_domain} -c 1 | sed '1{s/[^(]*(//;s/).*//;q}'`
@@ -335,7 +357,7 @@ function preinstall_check(){
         install_trojan
     else
         red "===================================="
-        red "域名解析地址与云服务器IP地址不一致"
+        red "域名解析地址与本云服务器 IP地址不一致"
         red "若你确认解析成功你可强制脚本继续运行"
         red "===================================="
         read -p "是否强制运行 ?请输入 [Y/n] :" yn
@@ -352,8 +374,8 @@ function preinstall_check(){
 
 function repair_cert(){
     systemctl stop nginx
-    iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-    iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+    #iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+    #iptables -I INPUT -p tcp --dport 443 -j ACCEPT
     Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
     if [ -n "$Port80" ]; then
         process80=`netstat -tlpn | awk -F '[: ]+' '$5=="80"{print $9}'`
@@ -363,13 +385,14 @@ function repair_cert(){
         exit 1
     fi
     green "============================"
-    blue "请输入绑定到云服务器的域名"
+    blue "请输入绑定到本云服务器的域名"
     blue "务必与之前失败使用的域名一致"
     green "============================"
     read your_domain
     real_addr=`ping ${your_domain} -c 1 | sed '1{s/[^(]*(//;s/).*//;q}'`
     local_addr=`curl ipv4.icanhazip.com`
     if [ $real_addr == $local_addr ] ; then
+        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
         ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
             --key-file   /usr/src/trojan-cert/$your_domain/private.key \
@@ -384,7 +407,7 @@ function repair_cert(){
         fi
     else
         red "================================"
-        red "域名解析地址与云服务器IP地址不一致"
+        red "域名解析地址与本云服务器 IP地址不一致"
         red "本次安装失败，请确保域名解析正常"
         red "================================"
     fi
@@ -446,9 +469,8 @@ function update_trojan(){
 start_menu(){
     clear
     green " ======================================="
-    green " 介绍: 一键安装trojan      "
-    green " 系统: centos7+/debian9+/ubuntu16.04+"
-    green " 作者: xhrm           "
+    green " 介绍: Trojan xhrm 20220211      "
+    green " 系统: centos7+/debian9+/ubuntu16.04+"            "
     blue " 注意:"
     red " *1. 不要在任何生产环境使用此脚本"
     red " *2. 不要占用80和443端口"
