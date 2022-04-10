@@ -91,7 +91,7 @@ EOF
         minus=$(($now_time - $create_time ))
         if [  $minus -gt 5184000 ]; then
             curl https://get.acme.sh | sh
-			~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server letsencrypt																						 
+			~/.acme.sh/acme.sh  --register-account  -m bangs@$your_domain --server letsencrypt																						 
             ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
             if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
                 cert_success="1"
