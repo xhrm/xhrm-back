@@ -13,7 +13,7 @@ V6_PROXY=""
 IP=`curl -sL -4 ip.sb`
 if [[ "$?" != "0" ]]; then
     IP=`curl -sL -6 ip.sb`
-    V6_PROXY="https://gh.hijk.art/"
+    V6_PROXY="https://xhrm.org/"
 fi
 
 BT="false"
@@ -391,7 +391,7 @@ getCert() {
         curl -sL https://get.acme.sh | sh -s email=bangs@bangs.live
         source ~/.bashrc
         ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
-        ~/.acme.sh/acme.sh --set-default-ca --server zerossl
+        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
         if [[ "$BT" = "false" ]]; then
             ~/.acme.sh/acme.sh   --issue -d $DOMAIN --keylength ec-256 --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx"  --standalone
         else
