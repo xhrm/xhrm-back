@@ -78,9 +78,10 @@ EOF
             red "不存在/usr/src/trojan-cert/$your_domain目录"
             exit 1
         fi
-        curl https://get.acme.sh | sh
-~/.acme.sh --set-default-ca --server letsencrypt
-~/.acme.sh/acme.sh  --register-account  -m bangs@$your_domain
+        curl https://get.acme.sh | sh -s email=test@$your_domain
+        source ~/.bashrc
+        ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
+        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
         if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
             cert_success="1"
@@ -91,8 +92,10 @@ EOF
         now_time=`date +%s`
         minus=$(($now_time - $create_time ))
         if [  $minus -gt 5184000 ]; then
-~/.acme.sh --set-default-ca --server letsencrypt
-~/.acme.sh/acme.sh  --register-account  -m bangs@$your_domain
+            curl https://get.acme.sh | sh -s email=test@$your_domain
+            source ~/.bashrc
+            ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
+            ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
             if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
                 cert_success="1"
@@ -103,8 +106,10 @@ EOF
         fi        
     else 
 	mkdir /usr/src/trojan-cert/$your_domain
-        curl https://get.acme.sh | sh
-		~/.acme.sh/acme.sh  --register-account  -m bangs@$your_domain --server  letsencrypt
+        curl https://get.acme.sh | sh -s email=test@$your_domain
+        source ~/.bashrc
+        ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
+        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
         if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
             cert_success="1"
@@ -373,47 +378,6 @@ function preinstall_check(){
     fi
 }
 
-function repair_cert(){
-    systemctl stop nginx
-    #iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-    #iptables -I INPUT -p tcp --dport 443 -j ACCEPT
-    Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
-    if [ -n "$Port80" ]; then
-        process80=`netstat -tlpn | awk -F '[: ]+' '$5=="80"{print $9}'`
-        red "==========================================================="
-        red "检测到80端口被占用，占用进程为：${process80}，本次安装结束"
-        red "==========================================================="
-        exit 1
-    fi
-    green "============================"
-    blue "请输入绑定到云服务器的域名"
-    blue "务必与之前失败使用的域名一致"
-    green "============================"
-    read your_domain
-    real_addr=`ping ${your_domain} -c 1 | sed '1{s/[^(]*(//;s/).*//;q}'`
-    local_addr=`curl ipv4.icanhazip.com`
-    if [ $real_addr == $local_addr ] ; then
-~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-~/.acme.sh/acme.sh  --register-account  -m bangs@$your_domain
-~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
-~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
-            --key-file   /usr/src/trojan-cert/$your_domain/private.key \
-            --fullchain-file /usr/src/trojan-cert/$your_domain/fullchain.cer \
-            --reloadcmd  "systemctl restart trojan"
-        if test -s /usr/src/trojan-cert/$your_domain/fullchain.cer; then
-            green "证书申请成功"
-            systemctl restart trojan
-            systemctl start nginx
-        else
-            red "申请证书失败"
-        fi
-    else
-        red "================================"
-        red "域名解析地址与云服务器IP地址不一致"
-        red "本次安装失败，请确保域名解析正常"
-        red "================================"
-    fi
-}
 
 function remove_trojan(){
     red "================================"
@@ -483,7 +447,6 @@ start_menu(){
     green " 1. 安装trojan"
     red " 2. 卸载trojan"
     green " 3. 升级trojan"
-    green " 4. 修复证书"
     blue " 0. 退出脚本"
     echo
     read -p "请输入数字 :" num
@@ -496,9 +459,6 @@ start_menu(){
     ;;
     3)
     update_trojan 
-    ;;
-    4)
-    repair_cert 
     ;;
     0)
     exit 1
