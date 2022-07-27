@@ -528,21 +528,24 @@ configTrojan() {
     mkdir -p /etc/trojan-go
     cat > $CONFIG_FILE <<-EOF
 {
-    "run_type": "server",
+"run_type": "server",
     "local_addr": "::",
     "local_port": ${PORT},
     "remote_addr": "127.0.0.1",
     "remote_port": 80,
     "password": [
         "$PASSWORD"
-    ],
-  "disable_http_check": false,
-  "udp_timeout": 60,
+        ],
+	"log_level": 1,
+	"log_file": "",
+	"password": [],
+	"disable_http_check": false,
+	"udp_timeout": 60,
   "ssl": {
     "verify": true,
     "verify_hostname": true,
-    "cert": *required*,
-    "key": *required*,
+    "cert": "${CERT_FILE}",
+    "key": "${KEY_FILE}",
     "key_password": "",
     "cipher": "",
     "curves": "",
@@ -558,17 +561,17 @@ configTrojan() {
     "fallback_port": 0,
     "fingerprint": ""
   },
-    "tcp": {
-        "no_delay": true,
-        "keep_alive": true,
-        "prefer_ipv4": false
-    },
-    "mux": {
-        "enabled": false,
-        "concurrency": 8,
-        "idle_timeout": 60
-    },
-      "router": {
+  "tcp": {
+    "no_delay": true,
+    "keep_alive": true,
+    "prefer_ipv4": false
+  },
+  "mux": {
+    "enabled": false,
+    "concurrency": 8,
+    "idle_timeout": 60
+  },
+  "router": {
     "enabled": false,
     "bypass": [],
     "proxy": [],
@@ -578,12 +581,12 @@ configTrojan() {
     "geoip": "$PROGRAM_DIR$/geoip.dat",
     "geosite": "$PROGRAM_DIR$/geosite.dat"
   },
-    "websocket": {
-        "enabled": ${WS},
-        "path": "${WSPATH}",
-        "host": "${DOMAIN}"
+  "websocket": {
+    "enabled": ${WS},
+    "path": "${WSPATH}",
+    "host": "${DOMAIN}"
   },
-    "shadowsocks": {
+  "shadowsocks": {
     "enabled": false,
     "method": "AES-128-GCM",
     "password": ""
@@ -603,26 +606,27 @@ configTrojan() {
     "username": "",
     "password": ""
   },
-    "mysql": {
-      "enabled": false,
-      "server_addr": "localhost",
-      "server_port": 3306,
-      "database": "",
-      "username": "",
-      "password": "",
-      "check_rate": 60
-    },
-    "api": {
+  "mysql": {
+    "enabled": false,
+    "server_addr": "localhost",
+    "server_port": 3306,
+    "database": "",
+    "username": "",
+    "password": "",
+    "check_rate": 60
+  },
+  "api": {
     "enabled": false,
     "api_addr": "",
     "api_port": 0,
     "ssl": {
-      "enabled": false,
-      "key": "",
-      "cert": "",
-      "verify_client": false,
-      "client_cert": []
+    "enabled": false,
+    "key": "",
+    "cert": "",
+    "verify_client": false,
+    "client_cert": []
     }
+  }
 }
 EOF
 }
