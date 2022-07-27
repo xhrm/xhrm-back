@@ -514,6 +514,8 @@ installTrojan() {
     rm -rf /tmp/${ZIP_FILE}
     unzip /tmp/${ZIP_FILE}.zip  -d /tmp/${ZIP_FILE}
     cp /tmp/${ZIP_FILE}/trojan-go /usr/bin
+    cp /tmp/${ZIP_FILE}/geoip.dat /etc/trojan-go
+    cp /tmp/${ZIP_FILE}/geosite.dat /etc/trojan-go
     cp /tmp/${ZIP_FILE}/example/trojan-go.service /etc/systemd/system/
     sed -i '/User=nobody/d' /etc/systemd/system/trojan-go.service
     systemctl daemon-reload
@@ -538,7 +540,6 @@ configTrojan() {
         ],
 	"log_level": 1,
 	"log_file": "",
-	"password": [],
 	"disable_http_check": false,
 	"udp_timeout": 60,
   "ssl": {
@@ -559,7 +560,7 @@ configTrojan() {
     "plain_http_response": "",
     "fallback_addr": "",
     "fallback_port": 0,
-    "fingerprint": ""
+    "fingerprint": "ios"
   },
   "tcp": {
     "no_delay": true,
@@ -578,8 +579,8 @@ configTrojan() {
     "block": [],
     "default_policy": "proxy",
     "domain_strategy": "as_is",
-    "geoip": "$PROGRAM_DIR$/geoip.dat",
-    "geosite": "$PROGRAM_DIR$/geosite.dat"
+    "geoip": "/etc/trojan-go/geoip.dat",
+    "geosite": "/etc/trojan-go/geosite.dat"
   },
   "websocket": {
     "enabled": ${WS},
