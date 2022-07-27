@@ -449,7 +449,7 @@ start_menu(){
     read -p "请输入数字 :" num
     case "$num" in
     1)
-    install_trojan 
+    preinstall_check 
     ;;
     0)
     exit 1
