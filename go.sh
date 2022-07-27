@@ -11,9 +11,9 @@ PLAIN='\033[0m'
 OS=`hostnamectl | grep -i system | cut -d: -f2`
 
 V6_PROXY=""
-IP=`curl -sL -4 ip.sb`
+IP=`curl -sL ipv4.icanhazip.com`
 if [[ "$?" != "0" ]]; then
-    IP=`curl -sL -6 ip.sb`
+    IP=`curl -sL ipv6.icanhazip.com`
     V6_PROXY="https://bangs.live/"
 fi
 
@@ -536,18 +536,28 @@ configTrojan() {
     "password": [
         "$PASSWORD"
     ],
-    "ssl": {
-        "cert": "${CERT_FILE}",
-        "key": "${KEY_FILE}",
-        "sni": "${DOMAIN}",
-        "alpn": [
-            "http/1.1"
-        ],
-        "session_ticket": true,
-        "reuse_session": true,
-        "fallback_addr": "127.0.0.1",
-        "fallback_port": 80
-    },
+  "disable_http_check": false,
+  "udp_timeout": 60,
+  "ssl": {
+    "verify": true,
+    "verify_hostname": true,
+    "cert": *required*,
+    "key": *required*,
+    "key_password": "",
+    "cipher": "",
+    "curves": "",
+    "prefer_server_cipher": false,
+    "sni": "",
+    "alpn": [
+      "http/1.1"
+    ],
+    "session_ticket": true,
+    "reuse_session": true,
+    "plain_http_response": "",
+    "fallback_addr": "",
+    "fallback_port": 0,
+    "fingerprint": ""
+  },
     "tcp": {
         "no_delay": true,
         "keep_alive": true,
@@ -558,11 +568,41 @@ configTrojan() {
         "concurrency": 8,
         "idle_timeout": 60
     },
+      "router": {
+    "enabled": false,
+    "bypass": [],
+    "proxy": [],
+    "block": [],
+    "default_policy": "proxy",
+    "domain_strategy": "as_is",
+    "geoip": "$PROGRAM_DIR$/geoip.dat",
+    "geosite": "$PROGRAM_DIR$/geosite.dat"
+  },
     "websocket": {
         "enabled": ${WS},
         "path": "${WSPATH}",
         "host": "${DOMAIN}"
-    },
+  },
+    "shadowsocks": {
+    "enabled": false,
+    "method": "AES-128-GCM",
+    "password": ""
+  },
+  "transport_plugin": {
+    "enabled": false,
+    "type": "",
+    "command": "",
+    "option": "",
+    "arg": [],
+    "env": []
+  },
+  "forward_proxy": {
+    "enabled": false,
+    "proxy_addr": "",
+    "proxy_port": 0,
+    "username": "",
+    "password": ""
+  },
     "mysql": {
       "enabled": false,
       "server_addr": "localhost",
@@ -571,6 +611,17 @@ configTrojan() {
       "username": "",
       "password": "",
       "check_rate": 60
+    },
+    "api": {
+    "enabled": false,
+    "api_addr": "",
+    "api_port": 0,
+    "ssl": {
+      "enabled": false,
+      "key": "",
+      "cert": "",
+      "verify_client": false,
+      "client_cert": []
     }
 }
 EOF
