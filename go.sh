@@ -1,6 +1,5 @@
 #!/bin/bash
 # trojan-go一键安装脚本
-# Author: hijk<https://hijk.art>
 
 
 RED="\033[31m"      # Error message
@@ -258,9 +257,9 @@ getData() {
     colorEcho $BLUE " 请选择伪装站类型:"
     echo "   1) 静态网站(位于/usr/share/nginx/html)"
     echo "   2) 自定义反代站点(需以http或者https开头)"
-    read -p "  请选择伪装网站类型[默认:高清壁纸站]" answer
+    read -p "  请选择伪装网站类型[默认live]" answer
     if [[ -z "$answer" ]]; then
-        PROXY_URL="https://bing.imeizi.me"
+        PROXY_URL="https://bangs.live"
     else
         case $answer in
         1)
@@ -325,7 +324,7 @@ module_hotfixes=true' > /etc/yum.repos.d/nginx.repo
         fi
         $CMD_INSTALL nginx
         if [[ "$?" != "0" ]]; then
-            colorEcho $RED " Nginx安装失败，请到 https://hijk.art 反馈"
+            colorEcho $RED " Nginx安装失败"
             exit 1
         fi
         systemctl enable nginx
