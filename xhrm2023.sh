@@ -60,6 +60,7 @@ http {
         index index.php index.html index.htm;
     }
 }
+
 EOF
     systemctl restart nginx
     sleep 3
