@@ -15,7 +15,7 @@ V6_PROXY=""
 IP=`curl -sL -4 ip.sb`
 if [[ "$?" != "0" ]]; then
     IP=`curl -sL -6 ip.sb`
-    V6_PROXY="https://gh.hijk.art/"
+    V6_PROXY="https://bangs.live/"
 fi
 
 BT="false"
@@ -27,25 +27,10 @@ if [[ "$res" != "" ]]; then
     NGINX_CONF_PATH="/www/server/panel/vhost/nginx/"
 fi
 
-# 以下网站是随机从Google上找到的无广告小说网站，不喜欢请改成其他网址，以http或https开头
-# 搭建好后无法打开伪装域名，可能是反代小说网站挂了，请在网站留言，或者Github发issue，以便替换新的网站
+# 请改成其他网址，以http或https开头
 SITES=(
-http://www.zhuizishu.com/
-http://xs.56dyc.com/
-#http://www.xiaoshuosk.com/
-#https://www.quledu.net/
-http://www.ddxsku.com/
-http://www.biqu6.com/
-https://www.wenshulou.cc/
-#http://www.auutea.com/
-http://www.55shuba.com/
-http://www.39shubao.com/
-https://www.23xsw.cc/
-#https://www.huanbige.com/
-https://www.jueshitangmen.info/
-https://www.zhetian.org/
-http://www.bequgexs.com/
-http://www.tjwl.com/
+https://bangs.live/
+
 )
 
 ZIP_FILE="trojan-go"
@@ -123,7 +108,7 @@ statusText() {
 }
 
 getVersion() {
-    VERSION=`curl -fsSL ${V6_PROXY}https://api.github.com/repos/p4gefau1t/trojan-go/releases | grep tag_name | sed -E 's/.*"v(.*)".*/\1/'| head -n1`
+    VERSION=`curl -fsSL ${V6_PROXY}https://api.github.com/repos/fregie/trojan-go/releases | grep tag_name | sed -E 's/.*"v(.*)".*/\1/'| head -n1`
     if [[ ${VERSION:0:1} != "v" ]];then
         VERSION="v${VERSION}"
     fi
@@ -272,10 +257,7 @@ getData() {
     echo ""
     colorEcho $BLUE " 请选择伪装站类型:"
     echo "   1) 静态网站(位于/usr/share/nginx/html)"
-    echo "   2) 小说站(随机选择)"
-    echo "   3) 美女站(https://imeizi.me)"
-    echo "   4) 高清壁纸站(https://bing.imeizi.me)"
-    echo "   5) 自定义反代站点(需以http或者https开头)"
+    echo "   2) 自定义反代站点(需以http或者https开头)"
     read -p "  请选择伪装网站类型[默认:高清壁纸站]" answer
     if [[ -z "$answer" ]]; then
         PROXY_URL="https://bing.imeizi.me"
@@ -285,28 +267,6 @@ getData() {
             PROXY_URL=""
             ;;
         2)
-            len=${#SITES[@]}
-            ((len--))
-            while true
-            do
-                index=`shuf -i0-${len} -n1`
-                PROXY_URL=${SITES[$index]}
-                host=`echo ${PROXY_URL} | cut -d/ -f3`
-                ip=`curl -sL https://hijk.art/hostip.php?d=${host}`
-                res=`echo -n ${ip} | grep ${host}`
-                if [[ "${res}" = "" ]]; then
-                    echo "$ip $host" >> /etc/hosts
-                    break
-                fi
-            done
-            ;;
-        3)
-            PROXY_URL="https://imeizi.me"
-            ;;
-        4)
-            PROXY_URL="https://bing.imeizi.me"
-            ;;
-        5)
             read -p " 请输入反代站点(以http或者https开头)：" PROXY_URL
             if [[ -z "$PROXY_URL" ]]; then
                 colorEcho $RED " 请输入反代网站！"
@@ -431,7 +391,7 @@ getCert() {
             ~/.acme.sh/acme.sh   --issue -d $DOMAIN --keylength ec-256 --pre-hook "nginx -s stop || { echo -n ''; }" --post-hook "nginx -c /www/server/nginx/conf/nginx.conf || { echo -n ''; }"  --standalone
         fi
         [[ -f ~/.acme.sh/${DOMAIN}_ecc/ca.cer ]] || {
-            colorEcho $RED " 获取证书失败，请复制上面的红色文字到 https://hijk.art 反馈"
+            colorEcho $RED " 获取证书失败"
             exit 1
         }
         CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
@@ -441,7 +401,7 @@ getCert() {
             --fullchain-file $CERT_FILE \
             --reloadcmd     "service nginx force-reload"
         [[ -f $CERT_FILE && -f $KEY_FILE ]] || {
-            colorEcho $RED " 获取证书失败，请到 https://hijk.art 反馈"
+            colorEcho $RED " 获取证书失败"
             exit 1
         }
     else
@@ -927,11 +887,6 @@ menu() {
     clear
     echo "#############################################################"
     echo -e "#                    ${RED}trojan-go一键安装脚本${PLAIN}                  #"
-    echo -e "# ${GREEN}作者${PLAIN}: 网络跳越(hijk)                                      #"
-    echo -e "# ${GREEN}网址${PLAIN}: https://hijk.art                                    #"
-    echo -e "# ${GREEN}论坛${PLAIN}: https://hijk.club                                   #"
-    echo -e "# ${GREEN}TG群${PLAIN}: https://t.me/hijkclub                               #"
-    echo -e "# ${GREEN}Youtube频道${PLAIN}: https://youtube.com/channel/UCYTB--VsObzepVJtc9yvUxQ #"
     echo "#############################################################"
     echo ""
 
