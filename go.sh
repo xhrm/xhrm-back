@@ -431,10 +431,63 @@ function preinstall_check(){
 
 
 
+function remove_trojan(){
+    red "================================"
+    red "即将卸载trojan"
+    red "同时卸载安装的nginx"
+    red "================================"
+    systemctl stop trojan
+    systemctl disable trojan
+    systemctl stop nginx
+    systemctl disable nginx
+    rm -f ${systempwd}trojan.service
+    if [ "$release" == "centos" ]; then
+        yum remove -y nginx
+    else
+        apt-get -y autoremove nginx
+        apt-get -y --purge remove nginx
+        apt-get -y autoremove && apt-get -y autoclean
+        find / | grep nginx | sudo xargs rm -rf
+    fi
+    rm -rf /usr/src/trojan/
+    rm -rf /usr/src/trojan-cli/
+    rm -rf /usr/share/nginx/html/*
+    rm -rf /etc/nginx/
+    rm -rf /root/.acme.sh/
+    green "=============="
+    green "trojan删除完毕"
+    green "=============="
+}
+
+function update_trojan(){
+    /usr/src/trojan/trojan -v 2>trojan.tmp
+    curr_version=`cat trojan.tmp | grep "trojan" | awk '{print $4}'`
+    wget https://api.github.com/repos/trojan-gfw/trojan/releases/latest >/dev/null 2>&1
+    latest_version=`grep tag_name latest| awk -F '[:,"v]' '{print $6}'`
+    rm -f latest
+    rm -f trojan.tmp
+    if version_lt "$curr_version" "$latest_version"; then
+        green "当前版本$curr_version,最新版本$latest_version,开始升级……"
+        mkdir trojan_update_temp && cd trojan_update_temp
+        wget https://github.com/trojan-gfw/trojan/releases/download/v${latest_version}/trojan-${latest_version}-linux-amd64.tar.xz >/dev/null 2>&1
+        tar xf trojan-${latest_version}-linux-amd64.tar.xz >/dev/null 2>&1
+        mv ./trojan/trojan /usr/src/trojan/
+        cd .. && rm -rf trojan_update_temp
+        systemctl restart trojan
+    /usr/src/trojan/trojan -v 2>trojan.tmp
+    green "服务端trojan升级完成，当前版本：`cat trojan.tmp | grep "trojan" | awk '{print $4}'`，客户端请在trojan github下载最新版"
+    rm -f trojan.tmp
+    else
+        green "当前版本$curr_version,最新版本$latest_version,无需升级"
+    fi
+   
+   
+}
+
 start_menu(){
     clear
     green " ======================================="
-    green " 介绍: 一键安装trojan-go     "
+    green " 介绍: 一键安装trojan      "
     green " 系统: centos7+/debian9+/ubuntu16.04+"
     green " 作者: xhrm           "
     blue " 注意:"
@@ -443,13 +496,21 @@ start_menu(){
     red " *3. 若第二次使用脚本，请先执行卸载trojan"
     green " ======================================="
     echo
-    green " 1. 安装"
+    green " 1. 安装trojan"
+    red " 2. 卸载trojan"
+    green " 3. 升级trojan"
     blue " 0. 退出脚本"
     echo
     read -p "请输入数字 :" num
     case "$num" in
     1)
-    preinstall_check 
+    preinstall_check
+    ;;
+    2)
+    remove_trojan 
+    ;;
+    3)
+    update_trojan 
     ;;
     0)
     exit 1
