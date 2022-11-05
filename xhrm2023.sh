@@ -176,7 +176,7 @@ EOF
     "password": [
         "$trojan_passwd"
     ],
-	"log_level": 1,
+	"log_level": 3,
     "ssl": {
         "cert": "/usr/src/trojan-cert/$your_domain/fullchain.cer",
         "key": "/usr/src/trojan-cert/$your_domain/private.key",
