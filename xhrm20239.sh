@@ -198,7 +198,7 @@ EOF
         "dhparam": ""
     },
     "tcp": {
-        "prefer_ipv4": false,
+        "prefer_ipv4": true,
         "no_delay": true,
         "keep_alive": true,
         "reuse_port": false,
