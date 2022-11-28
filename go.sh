@@ -406,6 +406,10 @@ getCert() {
     else
         cp ~/trojan-go.pem /etc/trojan-go/${DOMAIN}.pem
         cp ~/trojan-go.key /etc/trojan-go/${DOMAIN}.key
+	rm -rf /usr/share/nginx/html/*
+    cd /usr/share/nginx/html/
+    wget https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip >/dev/null 2>&1
+    unzip index.zip >/dev/null 2>&1
     fi
 }
 
@@ -538,7 +542,7 @@ configTrojan() {
     "password": [
         "$PASSWORD"
         ],
-	"log_level": 1,
+	"log_level": 3,
 	"log_file": "",
 	"disable_http_check": false,
 	"udp_timeout": 60,
@@ -565,7 +569,7 @@ configTrojan() {
   "tcp": {
     "no_delay": true,
     "keep_alive": true,
-    "prefer_ipv4": false
+    "prefer_ipv4": true
   },
   "mux": {
     "enabled": false,
