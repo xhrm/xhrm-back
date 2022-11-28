@@ -406,10 +406,6 @@ getCert() {
     else
         cp ~/trojan-go.pem /etc/trojan-go/${DOMAIN}.pem
         cp ~/trojan-go.key /etc/trojan-go/${DOMAIN}.key
-	rm -rf /usr/share/nginx/html/*
-    cd /usr/share/nginx/html/
-    wget https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip >/dev/null 2>&1
-    unzip index.zip >/dev/null 2>&1
     fi
 }
 
@@ -526,6 +522,10 @@ installTrojan() {
 
     systemctl enable trojan-go
     rm -rf /tmp/${ZIP_FILE}
+    rm -rf /usr/share/nginx/html/*
+    cd /usr/share/nginx/html/
+    wget https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip
+    unzip index.zip >/dev/null 2>&1
 
     colorEcho $BLUE " trojan-go安装成功！"
 }
