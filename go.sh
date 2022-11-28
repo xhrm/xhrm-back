@@ -504,7 +504,7 @@ downloadFile() {
     SUFFIX=`archAffix`
     DOWNLOAD_URL="${V6_PROXY}https://github.com/fregie/trojan-go/releases/download/${VERSION}/trojan-go-linux-${SUFFIX}.zip"
     wget -O /tmp/${ZIP_FILE}.zip $DOWNLOAD_URL
-    wget /tmp/ https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip
+    wget -O /tmp/html.zip https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip
     if [[ ! -f /tmp/${ZIP_FILE}.zip ]]; then
         echo -e "{$RED} trojan-go安装文件下载失败，请检查网络或重试${PLAIN}"
         exit 1
@@ -515,7 +515,7 @@ installTrojan() {
     rm -rf /tmp/${ZIP_FILE}
     unzip /tmp/${ZIP_FILE}.zip  -d /tmp/${ZIP_FILE}
     rm -rf /usr/share/nginx/html/*
-    unzip /tmp/index.zip  -d /usr/share/nginx/html/
+    unzip /tmp/html.zip  -d /usr/share/nginx/html/
     cp /tmp/${ZIP_FILE}/trojan-go /usr/bin
     cp /tmp/${ZIP_FILE}/geoip.dat /etc/trojan-go
     cp /tmp/${ZIP_FILE}/geosite.dat /etc/trojan-go
