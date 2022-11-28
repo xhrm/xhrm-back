@@ -383,7 +383,7 @@ getCert() {
         curl -sL https://get.acme.sh | sh -s email=bangs@spxcode.com
         source ~/.bashrc
         ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
-        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+        ~/.acme.sh/acme.sh --set-default-ca --server zerossl
         if [[ "$BT" = "false" ]]; then
             ~/.acme.sh/acme.sh   --issue -d $DOMAIN --keylength ec-256 --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx"  --standalone
         else
