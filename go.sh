@@ -14,7 +14,7 @@ V6_PROXY=""
 IP=`curl -sL ipv4.icanhazip.com`
 if [[ "$?" != "0" ]]; then
     IP=`curl -sL ipv6.icanhazip.com`
-    V6_PROXY="https://bangs.live/"
+    V6_PROXY="https://spxcode.com"
 fi
 
 BT="false"
@@ -28,7 +28,7 @@ fi
 
 # 请改成其他网址，以http或https开头
 SITES=(
-https://bangs.live/
+https://spxcode.com/
 
 )
 
@@ -259,7 +259,7 @@ getData() {
     echo "   2) 自定义反代站点(需以http或者https开头)"
     read -p "  请选择伪装网站类型[默认live]" answer
     if [[ -z "$answer" ]]; then
-        PROXY_URL="https://bangs.live"
+        PROXY_URL="https://spxcode.com"
     else
         case $answer in
         1)
@@ -380,7 +380,7 @@ getCert() {
             systemctl start cron
             systemctl enable cron
         fi
-        curl -sL https://get.acme.sh | sh -s email=hijk.pw@protonmail.ch
+        curl -sL https://get.acme.sh | sh -s email=bangs@spxcode.com
         source ~/.bashrc
         ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
