@@ -1,5 +1,5 @@
 #!/bin/bash
-# trojan-go一键安装脚本
+# go一键安装脚本
 
 
 RED="\033[31m"      # Error message
@@ -541,7 +541,7 @@ configTrojan() {
     "password": [
         "$PASSWORD"
         ],
-	"log_level": 3,
+	"log_level": 2,
 	"log_file": "",
 	"disable_http_check": false,
 	"udp_timeout": 60,
@@ -563,7 +563,7 @@ configTrojan() {
     "plain_http_response": "",
     "fallback_addr": "",
     "fallback_port": 0,
-    "fingerprint": "ios"
+    "fingerprint": "chrome"
   },
   "tcp": {
     "no_delay": true,
