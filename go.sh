@@ -257,7 +257,7 @@ getData() {
     colorEcho $BLUE " 请选择伪装站类型:"
     echo "   1) 静态网站(位于/usr/share/nginx/html)"
     echo "   2) 自定义反代站点(需以http或者https开头)"
-    read -p "  请选择伪装网站类型[默认live]" answer
+    read -p "  请选择伪装网站类型[默认spxcode]" answer
     if [[ -z "$answer" ]]; then
         PROXY_URL="https://spxcode.com"
     else
@@ -951,7 +951,7 @@ menu() {
     echo -e "  ${GREEN}1.${PLAIN}  安装go"
     echo -e "  ${GREEN}2.${PLAIN}  安装go+WS"
     echo -e "  ${GREEN}3.${PLAIN}  更新go"
-    echo -e "  ${GREEN}4.  ${RED}卸载trojan-go${PLAIN}"
+    echo -e "  ${GREEN}4.  ${RED}卸载go${PLAIN}"
     echo " -------------"
     echo -e "  ${GREEN}5.${PLAIN}  启动go"
     echo -e "  ${GREEN}6.${PLAIN}  重启go"
