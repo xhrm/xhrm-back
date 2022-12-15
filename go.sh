@@ -157,7 +157,7 @@ getData() {
     echo ""
     can_change=$1
     if [[ "$can_change" != "yes" ]]; then
-        echo " trojan-go一键脚本，运行之前请确认如下条件已经具备："
+        echo " go一键脚本，运行之前请确认如下条件已经具备："
         echo -e "  ${RED}1. 一个伪装域名${PLAIN}"
         echo -e "  ${RED}2. 伪装域名DNS解析指向当前服务器ip（${IP}）${PLAIN}"
         echo -e "  3. 如果/root目录下有 ${GREEN}trojan-go.pem${PLAIN} 和 ${GREEN}trojan-go.key${PLAIN} 证书密钥文件，无需理会条件2"
@@ -205,9 +205,9 @@ getData() {
     fi
 
     echo ""
-    read -p " 请设置trojan-go密码（不输则随机生成）:" PASSWORD
+    read -p " 请设置go密码（不输则随机生成）:" PASSWORD
     [[ -z "$PASSWORD" ]] && PASSWORD=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1`
-    colorEcho $BLUE " trojan-go密码：$PASSWORD"
+    colorEcho $BLUE " go密码：$PASSWORD"
     echo ""
     while true
     do
@@ -215,21 +215,21 @@ getData() {
         if [[ ${answer,,} = "n" ]]; then
             break
         fi
-        read -p " 请设置trojan-go密码（不输则随机生成）:" pass
+        read -p " 请设置go密码（不输则随机生成）:" pass
         [[ -z "$pass" ]] && pass=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1`
         echo ""
-        colorEcho $BLUE " trojan-go密码：$pass"
+        colorEcho $BLUE " go密码：$pass"
         PASSWORD="${PASSWORD}\",\"$pass"
     done
 
     echo ""
-    read -p " 请输入trojan-go端口[100-65535的一个数字，默认443]：" PORT
+    read -p " 请输入go端口[100-65535的一个数字，默认443]：" PORT
     [[ -z "${PORT}" ]] && PORT=443
     if [[ "${PORT:0:1}" = "0" ]]; then
         echo -e "${RED}端口不能以0开头${PLAIN}"
         exit 1
     fi
-    colorEcho $BLUE " trojan-go端口：$PORT"
+    colorEcho $BLUE " go端口：$PORT"
 
     if [[ ${WS} = "true" ]]; then
         echo ""
@@ -506,7 +506,7 @@ downloadFile() {
     wget -O /tmp/${ZIP_FILE}.zip $DOWNLOAD_URL
     wget -O /tmp/html.zip https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip
     if [[ ! -f /tmp/${ZIP_FILE}.zip ]]; then
-        echo -e "{$RED} trojan-go安装文件下载失败，请检查网络或重试${PLAIN}"
+        echo -e "{$RED} go安装文件下载失败，请检查网络或重试${PLAIN}"
         exit 1
     fi
 }
@@ -526,7 +526,7 @@ installTrojan() {
     systemctl enable trojan-go
     rm -rf /tmp/${ZIP_FILE}
 
-    colorEcho $BLUE " trojan-go安装成功！"
+    colorEcho $BLUE " go安装成功！"
 }
 
 configTrojan() {
@@ -759,7 +759,7 @@ install() {
     getCert
     configNginx
 
-    echo " 安装trojan-go..."
+    echo " 安装go..."
     getVersion
     downloadFile
     installTrojan
@@ -788,11 +788,11 @@ bbrReboot() {
 update() {
     res=`status`
     if [[ $res -lt 2 ]]; then
-        echo -e " ${RED}trojan-go未安装，请先安装！${PLAIN}"
+        echo -e " ${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
-    echo " 安装最新版trojan-go"
+    echo " 安装最新版go"
     getVersion
     downloadFile
     installTrojan
@@ -804,12 +804,12 @@ update() {
 uninstall() {
     res=`status`
     if [[ $res -lt 2 ]]; then
-        echo -e " ${RED}trojan-go未安装，请先安装！${PLAIN}"
+        echo -e " ${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
     echo ""
-    read -p " 确定卸载trojan-go？[y/n]：" answer
+    read -p " 确定卸载go？[y/n]：" answer
     if [[ "${answer,,}" = "y" ]]; then
         domain=`grep sni $CONFIG_FILE | cut -d\" -f4`
         
@@ -833,14 +833,14 @@ uninstall() {
 
         rm -rf $NGINX_CONF_PATH${domain}.conf
         ~/.acme.sh/acme.sh --uninstall
-        echo -e " ${GREEN}trojan-go卸载成功${PLAIN}"
+        echo -e " ${GREEN}go卸载成功${PLAIN}"
     fi
 }
 
 start() {
     res=`status`
     if [[ $res -lt 2 ]]; then
-        echo -e "${RED}trojan-go未安装，请先安装！${PLAIN}"
+        echo -e "${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
@@ -851,23 +851,23 @@ start() {
     port=`grep local_port $CONFIG_FILE|cut -d: -f2| tr -d \",' '`
     res=`ss -ntlp| grep ${port} | grep trojan-go`
     if [[ "$res" = "" ]]; then
-        colorEcho $RED " trojan-go启动失败，请检查端口是否被占用！"
+        colorEcho $RED " go启动失败，请检查端口是否被占用！"
     else
-        colorEcho $BLUE " trojan-go启动成功"
+        colorEcho $BLUE " go启动成功"
     fi
 }
 
 stop() {
     stopNginx
     systemctl stop trojan-go
-    colorEcho $BLUE " trojan-go停止成功"
+    colorEcho $BLUE " go停止成功"
 }
 
 
 restart() {
     res=`status`
     if [[ $res -lt 2 ]]; then
-        echo -e " ${RED}trojan-go未安装，请先安装！${PLAIN}"
+        echo -e " ${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
@@ -878,7 +878,7 @@ restart() {
 reconfig() {
     res=`status`
     if [[ $res -lt 2 ]]; then
-        echo -e " ${RED}trojan-go未安装，请先安装！${PLAIN}"
+        echo -e " ${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
@@ -901,7 +901,7 @@ reconfig() {
 showInfo() {
     res=`status`
     if [[ $res -lt 2 ]]; then
-        echo -e " ${RED}trojan-go未安装，请先安装！${PLAIN}"
+        echo -e " ${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
@@ -914,11 +914,11 @@ showInfo() {
     line11=`expr $line1 + 1`
     ws=`sed -n "${line11}p" $CONFIG_FILE | cut -d: -f2 | tr -d \",' '`
     echo ""
-    echo -n " trojan-go运行状态："
+    echo -n " go运行状态："
     statusText
     echo ""
-    echo -e " ${BLUE}trojan-go配置文件: ${PLAIN} ${RED}${CONFIG_FILE}${PLAIN}"
-    echo -e " ${BLUE}trojan-go配置信息：${PLAIN}"
+    echo -e " ${BLUE}go配置文件: ${PLAIN} ${RED}${CONFIG_FILE}${PLAIN}"
+    echo -e " ${BLUE}go配置信息：${PLAIN}"
     echo -e "   IP：${RED}$IP${PLAIN}"
     echo -e "   伪装域名/主机名(host)/SNI/peer名称：${RED}$domain${PLAIN}"
     echo -e "   端口(port)：${RED}$port${PLAIN}"
@@ -934,7 +934,7 @@ showInfo() {
 showLog() {
     res=`status`
     if [[ $res -lt 2 ]]; then
-        echo -e "${RED}trojan-go未安装，请先安装！${PLAIN}"
+        echo -e "${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
