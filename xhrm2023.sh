@@ -109,7 +109,7 @@ EOF
 	mkdir /usr/src/trojan-cert/$your_domain
         curl https://get.acme.sh | sh -s email=test@$your_domain
         source ~/.bashrc
-        ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
+        ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade --force
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
         if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
