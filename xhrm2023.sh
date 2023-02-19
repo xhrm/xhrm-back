@@ -83,7 +83,7 @@ EOF
         source ~/.bashrc
         ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
+	~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
         if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
             cert_success="1"
         fi
@@ -97,7 +97,7 @@ EOF
             source ~/.bashrc
             ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
             ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
+	    ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
             if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
                 cert_success="1"
             fi
