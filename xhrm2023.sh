@@ -83,8 +83,8 @@ EOF
         source ~/.bashrc
         ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-	~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+    ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
+        if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
             cert_success="1"
         fi
     elif [ -f "/usr/src/trojan-cert/$your_domain/fullchain.cer" ]; then
@@ -97,8 +97,8 @@ EOF
             source ~/.bashrc
             ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
             ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-	    ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-            if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+        ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
+            if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
                 cert_success="1"
             fi
         else 
@@ -106,13 +106,13 @@ EOF
             cert_success="1"
         fi        
     else 
-	mkdir /usr/src/trojan-cert/$your_domain
+    mkdir /usr/src/trojan-cert/$your_domain
         curl https://get.acme.sh | sh -s email=test@$your_domain
         source ~/.bashrc
         ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade --force
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+        if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
             cert_success="1"
         fi
     fi
@@ -176,7 +176,7 @@ EOF
     "password": [
         "$trojan_passwd"
     ],
-	"log_level": 3,
+    "log_level": 3,
     "ssl": {
         "cert": "/usr/src/trojan-cert/$your_domain/fullchain.cer",
         "key": "/usr/src/trojan-cert/$your_domain/private.key",
@@ -222,7 +222,7 @@ EOF
         rm -f /usr/src/trojan-cli.zip
         trojan_path=$(cat /dev/urandom | head -1 | md5sum | head -c 16)
         #mkdir /usr/share/nginx/html/${trojan_path}
-        #mv /usr/src/trojan-cli/trojan-cli.zip /usr/share/nginx/html/${trojan_path}/	
+        #mv /usr/src/trojan-cli/trojan-cli.zip /usr/share/nginx/html/${trojan_path}/    
         cat > ${systempwd}trojan.service <<-EOF
 [Unit]  
 Description=trojan  
@@ -247,7 +247,7 @@ EOF
         ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
             --key-file   /usr/src/trojan-cert/$your_domain/private.key \
             --fullchain-file  /usr/src/trojan-cert/$your_domain/fullchain.cer \
-            --reloadcmd  "systemctl restart trojan"	
+            --reloadcmd  "systemctl restart trojan" 
         green "=========================================================================="
         green "                         Trojan已安装完成"
         green "=========================================================================="
