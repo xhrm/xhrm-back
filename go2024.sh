@@ -257,9 +257,9 @@ getData() {
     colorEcho $BLUE " 请选择伪装站类型:"
     echo "   1) 静态网站(位于/usr/share/nginx/html)"
     echo "   2) 自定义反代站点(需以http或者https开头)"
-    read -p "  请选择伪装网站类型[默认spxcode]" answer
+    read -p "  请选择伪装网站类型[默认baidu]" answer
     if [[ -z "$answer" ]]; then
-        PROXY_URL="https://spxcode.com"
+        PROXY_URL="https://www.baidu.com"
     else
         case $answer in
         1)
@@ -571,7 +571,7 @@ configTrojan() {
     "prefer_ipv4": true
   },
   "mux": {
-    "enabled": false,
+    "enabled": true,
     "concurrency": 8,
     "idle_timeout": 60
   },
