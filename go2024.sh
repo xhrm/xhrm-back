@@ -563,7 +563,7 @@ configTrojan() {
     "plain_http_response": "",
     "fallback_addr": "",
     "fallback_port": 0,
-    "fingerprint": "ios"
+    "fingerprint": ""
   },
   "tcp": {
     "no_delay": true,
