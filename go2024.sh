@@ -542,7 +542,7 @@ configTrojan() {
         "$PASSWORD"
         ],
 	"log_level": 2,
-	"log_file": "/etc/log/log.txt",
+	"log_file": "/etc/123log/log.txt",
 	"disable_http_check": false,
 	"udp_timeout": 60,
   "ssl": {
