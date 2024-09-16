@@ -160,7 +160,7 @@ getData() {
         echo " go一键脚本，运行之前请确认如下条件已经具备："
         echo -e "  ${RED}1. 一个伪装域名${PLAIN}"
         echo -e "  ${RED}2. 伪装域名DNS解析指向当前服务器ip（${IP}）${PLAIN}"
-        echo -e "  3. 如果/root目录下有 ${GREEN}trojan-go.pem${PLAIN} 和 ${GREEN}trojan-go.key${PLAIN} 证书密钥文件，无需理会条件2"
+        echo -e "  3. 如果/root目录下有 ${GREEN}go.pem${PLAIN} 和 ${GREEN}go.key${PLAIN} 证书密钥文件，无需理会条件2"
         echo " "
         read -p " 确认满足按y，按其他退出脚本：" answer
         if [[ "${answer,,}" != "y" ]]; then
@@ -181,7 +181,7 @@ getData() {
 
         echo ""
         DOMAIN=${DOMAIN,,}
-        if [[ -f ~/trojan-go.pem && -f ~/trojan-go.key ]]; then
+        if [[ -f ~/go.pem && -f ~/go.key ]]; then
             echo -e "${GREEN} 检测到自有证书，将使用其部署${PLAIN}"
             CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
             KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
@@ -404,8 +404,8 @@ getCert() {
             exit 1
         }
     else
-        cp ~/trojan-go.pem /etc/trojan-go/${DOMAIN}.pem
-        cp ~/trojan-go.key /etc/trojan-go/${DOMAIN}.key
+        cp ~/go.pem /etc/trojan-go/${DOMAIN}.pem
+        cp ~/go.key /etc/trojan-go/${DOMAIN}.key
     fi
 }
 
@@ -563,7 +563,7 @@ configTrojan() {
     "plain_http_response": "",
     "fallback_addr": "",
     "fallback_port": 0,
-    "fingerprint": ""
+    "fingerprint": "chrome"
   },
   "tcp": {
     "no_delay": true,
