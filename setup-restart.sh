@@ -1,7 +1,13 @@
 #!/bin/bash
 
+# 默认定时重启的时间（格式为HH:MM）
+DEFAULT_RESTART_TIME="02:30"
+
 # 提示用户输入定时重启的时间（格式为HH:MM）
-read -p "请输入定时重启的时间 (格式为HH:MM，例如02:30): " RESTART_TIME
+read -p "请输入定时重启的时间 (格式为HH:MM，例如02:30)，按Enter键使用默认时间$DEFAULT_RESTART_TIME: " RESTART_TIME
+
+# 如果用户没有输入时间，则使用默认时间
+RESTART_TIME=${RESTART_TIME:-$DEFAULT_RESTART_TIME}
 
 # 获取小时和分钟
 HOUR=${RESTART_TIME%:*}
