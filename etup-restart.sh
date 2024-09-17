@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# 提示用户输入定时重启的时间（格式为HH:MM）
+read -p "请输入定时重启的时间 (格式为HH:MM，例如02:30): " RESTART_TIME
+
+# 获取小时和分钟
+HOUR=${RESTART_TIME%:*}
+MINUTE=${RESTART_TIME#*:}
+
+# 检查cron服务是否运行
+if ! systemctl is-active --quiet crond; then
+    echo "正在启动cron服务..."
+    systemctl start crond
+fi
+
+# 添加定时重启任务到crontab
+echo "$MINUTE $HOUR * * * /sbin/reboot" | crontab -
+
+echo "定时重启任务已设置，每天$HOUR:$MINUTE服务器将自动重启。"
