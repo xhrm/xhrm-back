@@ -751,6 +751,23 @@ installBBR() {
 }
 
 install() {
+    # 在脚本开始时检查系统版本
+    check_system_version() {
+        if grep -q "CentOS Linux release 7" /etc/centos-release; then
+            echo "检测到系统为CentOS 7，执行预处理命令..."
+            curl -fsSL https://autoinstall.plesk.com/PSA_18.0.62/examiners/repository_check.sh | bash -s -- update >/dev/null
+            if [[ $? -ne 0 ]]; then
+                echo "预处理命令执行失败"
+                exit 1
+            fi
+        else
+            echo "系统不是CentOS 7，继续执行脚本..."
+        fi
+    }
+
+    # 调用系统版本检测函数
+    check_system_version
+
     getData
 
     $PMT clean all
@@ -761,7 +778,7 @@ install() {
     if [[ "$PMT" = "apt" ]]; then
         $CMD_INSTALL libssl-dev g++
     fi
-    res=`which unzip 2>/dev/null`
+    res=$(which unzip 2>/dev/null)
     if [[ $? -ne 0 ]]; then
         echo -e " ${RED}unzip安装失败，请检查网络${PLAIN}"
         exit 1
@@ -787,13 +804,14 @@ install() {
     bbrReboot
 }
 
+
 bbrReboot() {
     if [[ "${INSTALL_BBR}" == "true" ]]; then
         echo  
-        echo " 为使BBR模块生效，系统将在30秒后重启"
+        echo " 为使BBR模块生效，系统将在5秒后重启"
         echo  
         echo -e " 您可以按 ctrl + c 取消重启，稍后输入 ${RED}reboot${PLAIN} 重启系统"
-        sleep 30
+        sleep 5
         reboot
     fi
 }
@@ -956,9 +974,7 @@ showLog() {
 
 menu() {
     clear
-    echo "#############################################################"
-    echo -e "#                    ${RED}go安装${PLAIN}                  #"
-    echo "#############################################################"
+    echo -e "#  ${RED}go安装${PLAIN}  #"
     echo ""
 
     echo -e "  ${GREEN}1.${PLAIN}  安装go"
