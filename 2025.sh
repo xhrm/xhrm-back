@@ -156,7 +156,7 @@ getData() {
         echo " go一键脚本，运行之前请确认如下条件已经具备："
         echo -e "  ${RED}1. 一个伪装域名${PLAIN}"
         echo -e "  ${RED}2. 伪装域名DNS解析指向当前服务器ip（${IP}）${PLAIN}"
-        echo -e "  3. 如果/root目录下有 ${GREEN}go.pem${PLAIN} 和 ${GREEN}go.key${PLAIN} 证书密钥文件，无需理会条件2"
+        echo -e "  3. 如果/root目录下有 ${GREEN}*.pem${PLAIN} 和 ${GREEN}*.key${PLAIN} 证书密钥文件，无需理会条件2"
         echo " "
         read -p " 确认满足按y，按其他退出脚本：" answer
         if [[ "${answer,,}" != "y" ]]; then
@@ -177,10 +177,20 @@ getData() {
 
         echo ""
         DOMAIN=${DOMAIN,,}
-        if [[ -f ~/go.pem && -f ~/go.key ]]; then
+        # 查找 /root 目录下的 .pem 和 .key 文件
+        pem_file=$(find /root -maxdepth 1 -type f -name "*.pem")
+        key_file=$(find /root -maxdepth 1 -type f -name "*.key")
+
+        if [[ -f "$pem_file" && -f "$key_file" ]]; then
             echo -e "${GREEN} 检测到自有证书，将使用其部署${PLAIN}"
             CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
             KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
+            
+            # 将找到的文件复制或移动到指定位置
+            cp "$pem_file" "$CERT_FILE"
+            cp "$key_file" "$KEY_FILE"
+
+
         else
             resolve=`curl -sL ipv4.icanhazip.com`
             res=`echo -n ${resolve} | grep ${IP}`
@@ -350,7 +360,7 @@ getCert() {
         stopNginx
         systemctl stop trojan-go
         sleep 2
-        res=`ss -ntlp| grep -E ':80 |:443 '`
+        res=$(ss -ntlp | grep -E ':80 |:443 ')
         if [[ "${res}" != "" ]]; then
             echo -e "${RED} 其他进程占用了80或443端口，请先关闭再运行一键脚本${PLAIN}"
             echo " 端口占用信息如下："
@@ -370,12 +380,12 @@ getCert() {
         fi
         curl -sL https://get.acme.sh | sh -s email=bangs@spxcode.com
         source ~/.bashrc
-        ~/.acme.sh/acme.sh  --upgrade  --auto-upgrade
+        ~/.acme.sh/acme.sh --upgrade --auto-upgrade
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
         if [[ "$BT" = "false" ]]; then
-            ~/.acme.sh/acme.sh   --issue -d $DOMAIN --keylength ec-256 --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx"  --standalone
+            ~/.acme.sh/acme.sh --issue -d $DOMAIN --keylength ec-256 --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx" --standalone
         else
-            ~/.acme.sh/acme.sh   --issue -d $DOMAIN --keylength ec-256 --pre-hook "nginx -s stop || { echo -n ''; }" --post-hook "nginx -c /www/server/nginx/conf/nginx.conf || { echo -n ''; }"  --standalone
+            ~/.acme.sh/acme.sh --issue -d $DOMAIN --keylength ec-256 --pre-hook "nginx -s stop || { echo -n ''; }" --post-hook "nginx -c /www/server/nginx/conf/nginx.conf || { echo -n ''; }" --standalone
         fi
         [[ -f ~/.acme.sh/${DOMAIN}_ecc/ca.cer ]] || {
             colorEcho $RED " 获取证书失败"
@@ -383,19 +393,34 @@ getCert() {
         }
         CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
         KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
-        ~/.acme.sh/acme.sh  --install-cert -d $DOMAIN --ecc \
-            --key-file       $KEY_FILE  \
+        ~/.acme.sh/acme.sh --install-cert -d $DOMAIN --ecc \
+            --key-file $KEY_FILE \
             --fullchain-file $CERT_FILE \
-            --reloadcmd     "service nginx force-reload"
+            --reloadcmd "service nginx force-reload"
         [[ -f $CERT_FILE && -f $KEY_FILE ]] || {
             colorEcho $RED " 获取证书失败"
             exit 1
         }
     else
-        cp ~/go.pem /etc/trojan-go/${DOMAIN}.pem
-        cp ~/go.key /etc/trojan-go/${DOMAIN}.key
+        # 动态匹配 .pem 和 .key 文件
+        pem_file=$(find /root -maxdepth 1 -type f -name "*.pem")
+        key_file=$(find /root -maxdepth 1 -type f -name "*.key")
+
+        if [[ -f "$pem_file" && -f "$key_file" ]]; then
+            echo -e "${GREEN} 检测到自有证书，将使用其部署${PLAIN}"
+            CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
+            KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
+            
+            # 将找到的文件复制到指定位置
+            cp "$pem_file" "$CERT_FILE"
+            cp "$key_file" "$KEY_FILE"
+        else
+            echo -e "${RED} 未找到自有证书文件 (.pem/.key)${PLAIN}"
+            exit 1
+        fi
     fi
 }
+
 
 configNginx() {
     mkdir -p /usr/share/nginx/html
