@@ -968,7 +968,7 @@ showLog() {
 
 menu() {
     clear
-    echo -e " ${RED}go安装${PLAIN}  "
+    echo -e "${RED}go安装${PLAIN}"
     echo ""
 
     echo -e "  ${GREEN}1.${PLAIN}  安装go"
