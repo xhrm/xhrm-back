@@ -581,7 +581,11 @@ configTrojan() {
   "tcp": {
     "no_delay": true,
     "keep_alive": true,
-    "prefer_ipv4": true
+    "reuse_port": true,
+    "fast_open": true,
+    "fast_open_qlen": 20,
+    "fragment": true,    // 启用 TLS 分片功能
+    "fragment_size": 64 // 设置每个分片的大小（以字节为单位）
   },
   "mux": {
     "enabled": true,
