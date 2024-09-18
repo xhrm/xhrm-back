@@ -185,12 +185,6 @@ getData() {
             echo -e "${GREEN} 检测到自有证书，将使用其部署${PLAIN}"
             CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
             KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
-            
-            # 将找到的文件复制或移动到指定位置
-            cp "$pem_file" "$CERT_FILE"
-            cp "$key_file" "$KEY_FILE"
-
-
         else
             resolve=`curl -sL ipv4.icanhazip.com`
             res=`echo -n ${resolve} | grep ${IP}`
