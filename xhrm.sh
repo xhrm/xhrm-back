@@ -389,6 +389,11 @@ function repair_cert(){
     if [ $real_addr == $local_addr ] ; then
 		~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
+        # 检查是否存在_ecc文件夹，选择正确的证书目录
+        cert_folder="/root/.acme.sh/$your_domain"
+        if [ -d "$cert_folder_ecc" ]; then
+            cert_folder="$cert_folder_ecc"
+        fi
         ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
             --key-file   /usr/src/trojan-cert/$your_domain/private.key \
             --fullchain-file /usr/src/trojan-cert/$your_domain/fullchain.cer \
