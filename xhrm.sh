@@ -78,13 +78,11 @@ EOF
         fi
         curl https://get.acme.sh | sh
         ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
-        ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-            # 检查是否存在 ECC 版本的证书目录
-            if test -s "$your_domain"_ecc/fullchain.cer; then
-                cert_success="1"
-            elif test -s "$your_domain"/fullchain.cer; then
-                cert_success="1"
-            fi
+        #~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
+        ~/.acme.sh/acme.sh --issue -d $your_domain --nginx --keylength 2048
+        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+            cert_success="1"
+        fi
     elif [ -f "/usr/src/trojan-cert/$your_domain/fullchain.cer" ]; then
         cd /usr/src/trojan-cert/$your_domain
         create_time=`stat -c %Y fullchain.cer`
@@ -93,11 +91,9 @@ EOF
         if [  $minus -gt 5184000 ]; then
             curl https://get.acme.sh | sh
             ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl                                                                                        
-            ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-            # 检查是否存在 ECC 版本的证书目录
-            if test -s "$your_domain"_ecc/fullchain.cer; then
-                cert_success="1"
-            elif test -s "$your_domain"/fullchain.cer; then
+            #~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
+            ~/.acme.sh/acme.sh --issue -d $your_domain --nginx --keylength 2048
+            if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
                 cert_success="1"
             fi
         else 
@@ -108,13 +104,11 @@ EOF
     mkdir /usr/src/trojan-cert/$your_domain
         curl https://get.acme.sh | sh
         ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl 
-        ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-            # 检查是否存在 ECC 版本的证书目录
-            if test -s "$your_domain"_ecc/fullchain.cer; then
-                cert_success="1"
-            elif test -s "$your_domain"/fullchain.cer; then
-                cert_success="1"
-            fi
+        #~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
+        ~/.acme.sh/acme.sh --issue -d $your_domain --nginx --keylength 2048
+        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+            cert_success="1"
+        fi
     fi
     
     if [ "$cert_success" == "1" ]; then
@@ -243,11 +237,6 @@ EOF
         chmod +x ${systempwd}trojan.service
         systemctl enable trojan.service
         cd /root
-        # 检查是否存在_ecc文件夹，选择正确的证书目录
-        cert_folder="/root/.acme.sh/$your_domain"
-        if [ -d "$cert_folder_ecc" ]; then
-            cert_folder="$cert_folder_ecc"
-        fi
         ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
             --key-file   /usr/src/trojan-cert/$your_domain/private.key \
             --fullchain-file  /usr/src/trojan-cert/$your_domain/fullchain.cer \
@@ -403,11 +392,6 @@ function repair_cert(){
     if [ $real_addr == $local_addr ] ; then
         ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
-        # 检查是否存在_ecc文件夹，选择正确的证书目录
-        cert_folder="/root/.acme.sh/$your_domain"
-        if [ -d "$cert_folder_ecc" ]; then
-            cert_folder="$cert_folder_ecc"
-        fi
         ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
             --key-file   /usr/src/trojan-cert/$your_domain/private.key \
             --fullchain-file /usr/src/trojan-cert/$your_domain/fullchain.cer \
