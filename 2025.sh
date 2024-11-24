@@ -736,7 +736,7 @@ installBBR() {
     echo "net.ipv4.tcp_synack_retries = 1" >> /etc/sysctl.conf
     echo "net.core.somaxconn = 32768" >> /etc/sysctl.conf
     echo "net.core.netdev_max_backlog = 32768" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_timestamps = 0" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_timestamps = 1" >> /etc/sysctl.conf
     echo "net.ipv4.tcp_max_orphans = 32768" >> /etc/sysctl.conf
 
     # 设置内核参数
