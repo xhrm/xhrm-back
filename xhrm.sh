@@ -77,9 +77,9 @@ EOF
             exit 1
         fi
         curl https://get.acme.sh | sh
-		~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
+        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+        if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
             cert_success="1"
         fi
     elif [ -f "/usr/src/trojan-cert/$your_domain/fullchain.cer" ]; then
@@ -89,9 +89,9 @@ EOF
         minus=$(($now_time - $create_time ))
         if [  $minus -gt 5184000 ]; then
             curl https://get.acme.sh | sh
-			~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl																						 
+            ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl                                                                                        
             ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-            if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+            if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
                 cert_success="1"
             fi
         else 
@@ -99,11 +99,11 @@ EOF
             cert_success="1"
         fi        
     else 
-	mkdir /usr/src/trojan-cert/$your_domain
+    mkdir /usr/src/trojan-cert/$your_domain
         curl https://get.acme.sh | sh
-		~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl 
+        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl 
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+        if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
             cert_success="1"
         fi
     fi
@@ -167,7 +167,7 @@ EOF
     "password": [
         "$trojan_passwd"
     ],
-	"log_level": 1,
+    "log_level": 1,
     "ssl": {
         "cert": "/usr/src/trojan-cert/$your_domain/fullchain.cer",
         "key": "/usr/src/trojan-cert/$your_domain/private.key",
@@ -213,7 +213,7 @@ EOF
         rm -f /usr/src/trojan-cli.zip
         trojan_path=$(cat /dev/urandom | head -1 | md5sum | head -c 16)
         #mkdir /usr/share/nginx/html/${trojan_path}
-        #mv /usr/src/trojan-cli/trojan-cli.zip /usr/share/nginx/html/${trojan_path}/	
+        #mv /usr/src/trojan-cli/trojan-cli.zip /usr/share/nginx/html/${trojan_path}/    
         cat > ${systempwd}trojan.service <<-EOF
 [Unit]  
 Description=trojan  
@@ -237,7 +237,7 @@ EOF
         ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
             --key-file   /usr/src/trojan-cert/$your_domain/private.key \
             --fullchain-file  /usr/src/trojan-cert/$your_domain/fullchain.cer \
-            --reloadcmd  "systemctl restart trojan"	
+            --reloadcmd  "systemctl restart trojan" 
         green "=========================================================================="
         green "                         Trojan已安装完成"
         green "=========================================================================="
@@ -387,7 +387,7 @@ function repair_cert(){
     real_addr=`ping ${your_domain} -c 1 | sed '1{s/[^(]*(//;s/).*//;q}'`
     local_addr=`curl ipv4.icanhazip.com`
     if [ $real_addr == $local_addr ] ; then
-		~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
+        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
         # 检查是否存在_ecc文件夹，选择正确的证书目录
         cert_folder="/root/.acme.sh/$your_domain"
