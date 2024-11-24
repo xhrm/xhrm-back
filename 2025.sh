@@ -698,36 +698,63 @@ setFirewall() {
 }
 
 installBBR() {
+    # 确保 BBR 需要安装
     if [[ "$NEED_BBR" != "y" ]]; then
         INSTALL_BBR=false
         return
     fi
-    result=$(lsmod | grep bbr)
-    if [[ "$result" != "" ]]; then
-        echo " BBR模块已安装"
-        INSTALL_BBR=false
-        return
-    fi
-    res=`hostnamectl | grep -i openvz`
-    if [[ "$res" != "" ]]; then
-        echo  " openvz机器，跳过安装"
-        INSTALL_BBR=false
-        return
-    fi
-    
-    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-    sysctl -p
-    result=$(lsmod | grep bbr)
-    if [[ "$result" != "" ]]; then
-        echo " BBR模块已启用"
+
+    # 检查是否已经安装了 BBR 模块
+    if lsmod | grep -q bbr; then
+        echo "BBR模块已安装"
         INSTALL_BBR=false
         return
     fi
 
-    colorEcho $BLUE " 安装BBR模块..."
-    if [[ "$PMT" = "yum" ]]; then
-        if [[ "$V6_PROXY" = "" ]]; then
+    # 检查是否在 OpenVZ 环境下，OpenVZ 不支持 BBR
+    if hostnamectl | grep -iq openvz; then
+        echo "OpenVZ机器，跳过安装"
+        INSTALL_BBR=false
+        return
+    fi
+
+    # 配置系统以启用 BBR
+    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+
+    # 网络优化设置
+    echo "fs.file-max = 1000000" >> /etc/sysctl.conf
+    echo "fs.inotify.max_user_instances = 8192" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_syncookies = 1" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_fin_timeout = 30" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
+    echo "net.ipv4.ip_local_port_range = 1024 65000" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_max_syn_backlog = 16384" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_max_tw_buckets = 6000" >> /etc/sysctl.conf
+    echo "net.ipv4.route.gc_timeout = 100" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_syn_retries = 1" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_synack_retries = 1" >> /etc/sysctl.conf
+    echo "net.core.somaxconn = 32768" >> /etc/sysctl.conf
+    echo "net.core.netdev_max_backlog = 32768" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_timestamps = 0" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_max_orphans = 32768" >> /etc/sysctl.conf
+
+    # 设置内核参数
+    sysctl -p
+
+    # 再次检查 BBR 是否已启用
+    if lsmod | grep -q bbr; then
+        echo "BBR模块已启用"
+        INSTALL_BBR=false
+        return
+    fi
+
+    # 安装 BBR 模块
+    colorEcho $BLUE "安装BBR模块..."
+
+    if [[ "$PMT" == "yum" ]]; then
+        # 安装 ELRepo 核心和启用 BBR
+        if [[ -z "$V6_PROXY" ]]; then
             rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
             rpm -Uvh http://www.elrepo.org/elrepo-release-7.0-4.el7.elrepo.noarch.rpm
             $CMD_INSTALL --enablerepo=elrepo-kernel kernel-ml
@@ -737,12 +764,14 @@ installBBR() {
             INSTALL_BBR=true
         fi
     else
+        # 对于 Debian/Ubuntu 系统安装适用内核
         $CMD_INSTALL --install-recommends linux-generic-hwe-16.04
         grub-set-default 0
         echo "tcp_bbr" >> /etc/modules-load.d/modules.conf
         INSTALL_BBR=true
     fi
 }
+
 
 install() {
     # 在脚本开始时检查系统版本
