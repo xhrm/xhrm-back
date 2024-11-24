@@ -436,18 +436,17 @@ function update_trojan(){
 start_menu(){
     clear
     green " ======================================="
-    green " 介绍: 一键安装trojan      "
+    green " 介绍: BANGS      "
     green " 系统: centos7+/debian9+/ubuntu16.04+"
     green " 作者: xhrm           "
     blue " 注意:"
     red " *1. 不要在任何生产环境使用此脚本"
     red " *2. 不要占用80和443端口"
-    red " *3. 若第二次使用脚本，请先执行卸载trojan"
     green " ======================================="
     echo
-    green " 1. 安装trojan"
-    red " 2. 卸载trojan"
-    green " 3. 升级trojan"
+    green " 1. 安装"
+    red " 2. 卸载"
+    green " 3. 升级"
     blue " 0. 退出脚本"
     echo
     read -p "请输入数字 :" num
