@@ -79,7 +79,12 @@ EOF
         curl https://get.acme.sh | sh
         ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-        if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
+         # 检查是否存在_ecc文件夹，选择正确的证书目录
+        cert_folder="/root/.acme.sh/$your_domain"
+        if [ -d "$cert_folder_ecc" ]; then
+            cert_folder="$cert_folder_ecc"
+        fi
+        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
             cert_success="1"
         fi
     elif [ -f "/usr/src/trojan-cert/$your_domain/fullchain.cer" ]; then
@@ -91,7 +96,12 @@ EOF
             curl https://get.acme.sh | sh
             ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl                                                                                        
             ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-            if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
+             # 检查是否存在_ecc文件夹，选择正确的证书目录
+        cert_folder="/root/.acme.sh/$your_domain"
+        if [ -d "$cert_folder_ecc" ]; then
+            cert_folder="$cert_folder_ecc"
+        fi
+            if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
                 cert_success="1"
             fi
         else 
@@ -103,7 +113,12 @@ EOF
         curl https://get.acme.sh | sh
         ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl 
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-        if test -s /root/.acme.sh/$your_domain_ecc/fullchain.cer; then
+         # 检查是否存在_ecc文件夹，选择正确的证书目录
+        cert_folder="/root/.acme.sh/$your_domain"
+        if [ -d "$cert_folder_ecc" ]; then
+            cert_folder="$cert_folder_ecc"
+        fi
+        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
             cert_success="1"
         fi
     fi
@@ -389,7 +404,7 @@ function repair_cert(){
     if [ $real_addr == $local_addr ] ; then
         ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
-        # 检查是否存在_ecc文件夹，选择正确的证书目录
+         # 检查是否存在_ecc文件夹，选择正确的证书目录
         cert_folder="/root/.acme.sh/$your_domain"
         if [ -d "$cert_folder_ecc" ]; then
             cert_folder="$cert_folder_ecc"
