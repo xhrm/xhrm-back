@@ -80,9 +80,9 @@ EOF
         ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
             # 检查是否存在 ECC 版本的证书目录
-            if test -s "$domain_dir"_ecc/fullchain.cer; then
+            if test -s "$your_domain"_ecc/fullchain.cer; then
                 cert_success="1"
-            elif test -s "$domain_dir"/fullchain.cer; then
+            elif test -s "$your_domain"/fullchain.cer; then
                 cert_success="1"
             fi
     elif [ -f "/usr/src/trojan-cert/$your_domain/fullchain.cer" ]; then
@@ -95,9 +95,9 @@ EOF
             ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl                                                                                        
             ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
             # 检查是否存在 ECC 版本的证书目录
-            if test -s "$domain_dir"_ecc/fullchain.cer; then
+            if test -s "$your_domain"_ecc/fullchain.cer; then
                 cert_success="1"
-            elif test -s "$domain_dir"/fullchain.cer; then
+            elif test -s "$your_domain"/fullchain.cer; then
                 cert_success="1"
             fi
         else 
@@ -110,9 +110,9 @@ EOF
         ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl 
         ~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
             # 检查是否存在 ECC 版本的证书目录
-            if test -s "$domain_dir"_ecc/fullchain.cer; then
+            if test -s "$your_domain"_ecc/fullchain.cer; then
                 cert_success="1"
-            elif test -s "$domain_dir"/fullchain.cer; then
+            elif test -s "$your_domain"/fullchain.cer; then
                 cert_success="1"
             fi
     fi
