@@ -570,7 +570,7 @@ configTrojan() {
     "plain_http_response": "",
     "fallback_addr": "",
     "fallback_port": 0,
-    "fingerprint": "chrome"
+    "fingerprint": ""
   },
   "tcp": {
     "no_delay": true,
@@ -580,7 +580,7 @@ configTrojan() {
   "mux": {
     "enabled": true,
     "concurrency": 8,
-    "idle_timeout": 60
+    "idle_timeout": 0
   },
   "router": {
     "enabled": false,
