@@ -6,9 +6,11 @@ BLOCKED_DOMAINS=(
     "openai.com"
 )
 
-# 备份原始的 /etc/hosts 文件
+# 定义 /etc/hosts 文件路径
 HOSTS_FILE="/etc/hosts"
 BACKUP_FILE="/etc/hosts.bak"
+
+# 备份原始的 /etc/hosts 文件
 if [ ! -f "$BACKUP_FILE" ]; then
     echo "备份 /etc/hosts 文件到 $BACKUP_FILE"
     cp $HOSTS_FILE $BACKUP_FILE
@@ -26,11 +28,23 @@ for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
     fi
 done
 
-# 刷新网络服务（某些系统需要）
+# 检测并刷新 DNS 缓存
+echo "尝试刷新 DNS 缓存..."
 if command -v systemctl &>/dev/null; then
-    systemctl restart nscd || systemctl restart network
+    if systemctl list-units --type=service | grep -q "nscd.service"; then
+        echo "检测到 nscd 服务，正在重启..."
+        systemctl restart nscd
+    elif systemctl list-units --type=service | grep -q "NetworkManager.service"; then
+        echo "检测到 NetworkManager 服务，正在重启..."
+        systemctl restart NetworkManager
+    elif systemctl list-units --type=service | grep -q "systemd-resolved.service"; then
+        echo "检测到 systemd-resolved 服务，正在重启..."
+        systemctl restart systemd-resolved
+    else
+        echo "未检测到支持的 DNS 缓存服务，跳过刷新。"
+    fi
 else
-    echo "系统未使用 systemd，手动刷新网络服务（如有需要）。"
+    echo "Systemctl 不可用，无法自动刷新网络服务，请手动刷新 DNS（如有需要）。"
 fi
 
 echo "屏蔽完成。"
