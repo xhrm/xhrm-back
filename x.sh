@@ -27,7 +27,7 @@ for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
         echo "域名 $DOMAIN 已经屏蔽，跳过..."
     fi
 done
-
+ 
 # 检测并刷新 DNS 缓存
 echo "尝试刷新 DNS 缓存..."
 if command -v systemctl &>/dev/null; then
