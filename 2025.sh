@@ -772,6 +772,26 @@ installBBR() {
     fi
 }
 
+# 定义定时重启模块
+setRestartTask() {
+    # 固定定时重启时间为00:10
+    RESTART_TIME="00:10"
+
+    # 获取小时和分钟
+    HOUR=${RESTART_TIME%:*}
+    MINUTE=${RESTART_TIME#*:}
+
+    # 检查cron服务是否运行
+    if ! systemctl is-active --quiet crond; then
+        echo "正在启动cron服务..."
+        systemctl start crond
+    fi
+
+    # 添加定时重启任务到crontab
+    echo "$MINUTE $HOUR * * * /bin/systemctl restart trojan-go" | crontab -
+
+    echo "定时重启任务已设置，每天$HOUR:$MINUTE服务器将自动重启 trojan-go。"
+}
 
 install() {
     # 在脚本开始时检查系统版本
@@ -817,6 +837,8 @@ install() {
     downloadFile
     installTrojan
     configTrojan
+    # 设置定时重启任务
+    setRestartTask
 
     setSelinux
     installBBR
