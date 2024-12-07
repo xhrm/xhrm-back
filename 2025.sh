@@ -711,9 +711,17 @@ installBBR() {
         return
     fi
 
-    # 检查是否在 OpenVZ 环境下，OpenVZ 不支持 BBR
-    if hostnamectl | grep -iq openvz; then
-        echo "OpenVZ机器，跳过安装"
+    # 检查是否在 OpenVZ 或其他虚拟化环境下
+    if hostnamectl | grep -iq openvz || grep -qE 'lxc|kvm' /proc/cpuinfo; then
+        echo "虚拟化环境，跳过安装"
+        INSTALL_BBR=false
+        return
+    fi
+
+    # 检查当前内核版本是否支持 BBR
+    KERNEL_VERSION=$(uname -r)
+    if [[ "$KERNEL_VERSION" < "4.9" ]]; then
+        echo "当前内核版本过低，BBR 不受支持（需要 4.9 及以上）"
         INSTALL_BBR=false
         return
     fi
@@ -723,24 +731,29 @@ installBBR() {
     echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
 
     # 网络优化设置
-    echo "fs.file-max = 1000000" >> /etc/sysctl.conf
-    echo "fs.inotify.max_user_instances = 8192" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_syncookies = 1" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_fin_timeout = 30" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
-    echo "net.ipv4.ip_local_port_range = 1024 65000" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_max_syn_backlog = 16384" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_max_tw_buckets = 6000" >> /etc/sysctl.conf
-    echo "net.ipv4.route.gc_timeout = 100" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_syn_retries = 1" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_synack_retries = 1" >> /etc/sysctl.conf
-    echo "net.core.somaxconn = 32768" >> /etc/sysctl.conf
-    echo "net.core.netdev_max_backlog = 32768" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_timestamps = 1" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_max_orphans = 32768" >> /etc/sysctl.conf
+    cat <<EOF >> /etc/sysctl.conf
+fs.file-max = 1000000
+fs.inotify.max_user_instances = 8192
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.ip_local_port_range = 1024 65000
+net.ipv4.tcp_max_syn_backlog = 16384
+net.ipv4.tcp_max_tw_buckets = 6000
+net.ipv4.route.gc_timeout = 100
+net.ipv4.tcp_syn_retries = 1
+net.ipv4.tcp_synack_retries = 1
+net.core.somaxconn = 32768
+net.core.netdev_max_backlog = 32768
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_max_orphans = 32768
+EOF
 
-    # 设置内核参数
+    # 应用内核参数
     sysctl -p
+
+    # 确保 BBR 模块已启用
+    modprobe tcp_bbr
 
     # 再次检查 BBR 是否已启用
     if lsmod | grep -q bbr; then
@@ -750,7 +763,7 @@ installBBR() {
     fi
 
     # 安装 BBR 模块
-    colorEcho $BLUE "安装BBR模块..."
+    echo "安装BBR模块..."
 
     if [[ "$PMT" == "yum" ]]; then
         # 安装 ELRepo 核心和启用 BBR
