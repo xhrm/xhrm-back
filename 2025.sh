@@ -570,7 +570,7 @@ configTrojan() {
     "plain_http_response": "",
     "fallback_addr": "",
     "fallback_port": 0,
-    "fingerprint": ""
+    "fingerprint": "firefox"
   },
   "tcp": {
     "no_delay": true,
