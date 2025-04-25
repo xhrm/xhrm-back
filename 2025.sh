@@ -291,11 +291,6 @@ getData() {
 
     colorEcho $BLUE " 允许搜索引擎：$ALLOW_SPIDER"
 
-    echo ""
-    read -p " 是否安装BBR(默认安装)?[y/n]:" NEED_BBR
-    [[ -z "$NEED_BBR" ]] && NEED_BBR=y
-    [[ "$NEED_BBR" = "Y" ]] && NEED_BBR=y
-    colorEcho $BLUE " 安装BBR：$NEED_BBR"
 }
 
 installNginx() {
@@ -697,81 +692,6 @@ setFirewall() {
     fi
 }
 
-installBBR() {
-    # 确保 BBR 需要安装
-    if [[ "$NEED_BBR" != "y" ]]; then
-        INSTALL_BBR=false
-        return
-    fi
-
-    # 检查是否已经安装了 BBR 模块
-    if lsmod | grep -q bbr; then
-        echo "BBR模块已安装"
-        INSTALL_BBR=false
-        return
-    fi
-
-    # 检查是否在 OpenVZ 环境下，OpenVZ 不支持 BBR
-    if hostnamectl | grep -iq openvz; then
-        echo "OpenVZ机器，跳过安装"
-        INSTALL_BBR=false
-        return
-    fi
-
-    # 配置系统以启用 BBR
-    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-
-    # 网络优化设置
-    echo "fs.file-max = 1000000" >> /etc/sysctl.conf
-    echo "fs.inotify.max_user_instances = 8192" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_syncookies = 1" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_fin_timeout = 30" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
-    echo "net.ipv4.ip_local_port_range = 1024 65000" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_max_syn_backlog = 16384" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_max_tw_buckets = 6000" >> /etc/sysctl.conf
-    echo "net.ipv4.route.gc_timeout = 100" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_syn_retries = 1" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_synack_retries = 1" >> /etc/sysctl.conf
-    echo "net.core.somaxconn = 32768" >> /etc/sysctl.conf
-    echo "net.core.netdev_max_backlog = 32768" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_timestamps = 1" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_max_orphans = 32768" >> /etc/sysctl.conf
-
-    # 设置内核参数
-    sysctl -p
-
-    # 再次检查 BBR 是否已启用
-    if lsmod | grep -q bbr; then
-        echo "BBR模块已启用"
-        INSTALL_BBR=false
-        return
-    fi
-
-    # 安装 BBR 模块
-    colorEcho $BLUE "安装BBR模块..."
-
-    if [[ "$PMT" == "yum" ]]; then
-        # 安装 ELRepo 核心和启用 BBR
-        if [[ -z "$V6_PROXY" ]]; then
-            rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
-            rpm -Uvh http://www.elrepo.org/elrepo-release-7.0-4.el7.elrepo.noarch.rpm
-            $CMD_INSTALL --enablerepo=elrepo-kernel kernel-ml
-            $CMD_REMOVE kernel-3.*
-            grub2-set-default 0
-            echo "tcp_bbr" >> /etc/modules-load.d/modules.conf
-            INSTALL_BBR=true
-        fi
-    else
-        # 对于 Debian/Ubuntu 系统安装适用内核
-        $CMD_INSTALL --install-recommends linux-generic-hwe-16.04
-        grub-set-default 0
-        echo "tcp_bbr" >> /etc/modules-load.d/modules.conf
-        INSTALL_BBR=true
-    fi
-}
-
 
 install() {
     # 在脚本开始时检查系统版本
@@ -823,21 +743,8 @@ install() {
 
     start
     showInfo
-
-    bbrReboot
 }
 
-
-bbrReboot() {
-    if [[ "${INSTALL_BBR}" == "true" ]]; then
-        echo  
-        echo " 为使BBR模块生效，系统将在5秒后重启"
-        echo  
-        echo -e " 您可以按 ctrl + c 取消重启，稍后输入 ${RED}reboot${PLAIN} 重启系统"
-        sleep 5
-        reboot
-    fi
-}
 
 update() {
     res=`status`
