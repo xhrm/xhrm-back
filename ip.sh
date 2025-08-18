@@ -1,7 +1,7 @@
 #!/bin/bash
 # ================================================
-# Trojan-Go 多IP限制 + Fail2ban 跨平台管理脚本
-# 支持: CentOS 7/8 / Ubuntu / Debian
+# Trojan-Go 多IP限制 + Fail2ban 管理脚本
+# 支持: CentOS 7 / Ubuntu / Debian
 # ================================================
 
 CONF_FILE="/etc/trojan-ban.conf"
@@ -14,6 +14,10 @@ detect_os() {
     if [ -f /etc/redhat-release ]; then
         OS_TYPE="centos"
         OS_VER=$(rpm -E %{rhel})
+        if [ "$OS_VER" != "7" ]; then
+            echo ">>> 仅支持 CentOS 7"
+            exit 1
+        fi
     elif [ -f /etc/debian_version ]; then
         OS_TYPE="debian"
         OS_VER=$(lsb_release -sr 2>/dev/null || cat /etc/debian_version)
@@ -33,27 +37,11 @@ install_fail2ban() {
 
     echo ">>> 安装 Fail2ban ..."
     if [ "$OS_TYPE" == "centos" ]; then
-        yum install -y epel-release || true
-        # 临时禁用 SELinux 避免依赖冲突
-        SELINUX_STATUS=$(getenforce)
-        if [ "$SELINUX_STATUS" != "Disabled" ]; then
-            setenforce 0
-        fi
-        yum install -y fail2ban --nobest || {
-            echo ">>> 安装失败，请手动检查 EPEL 源"
-            exit 1
-        }
-        # 恢复 SELinux
-        if [ "$SELINUX_STATUS" != "Disabled" ]; then
-            setenforce 1
-        fi
+        yum install -y epel-release
+        yum install -y fail2ban
     else
-        # Ubuntu/Debian
         apt update
-        apt install -y fail2ban || {
-            echo ">>> 安装失败，请检查 apt 源"
-            exit 1
-        }
+        apt install -y fail2ban
     fi
 
     systemctl enable fail2ban
