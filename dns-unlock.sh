@@ -1,317 +1,251 @@
-#!/bin/bash
-# ===========================================
-# DNS 解锁一键脚本 (A + B 通用) - Debian/Ubuntu 版
-# 支持 A: dnsmasq + sniproxy + stunnel HTTPS透明代理 + 永久iptables
-# 支持 B: smartdns 分流客户端，关键字立即生效
-# 自动处理 systemd-resolved 占用 53 端口问题
-# 作者: xhrm
-# ===========================================
+#!/usr/bin/env bash
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
+export PATH
 
-set -euo pipefail
+red='\033[0;31m'
+green='\033[0;32m'
+yellow='\033[0;33m'
+plain='\033[0m'
 
-CONFIG_DIR="/etc/dns-unlock"
-DOMAIN_FILE="$CONFIG_DIR/domains.txt"
-A_SERVER_IP=""
-NORMAL_DNS1="8.8.8.8"
-NORMAL_DNS2="1.1.1.1"
-TEST_DOMAIN="netflix.com"
+[[ $EUID -ne 0 ]] && echo -e "[${red}Error${plain}] 请使用root用户来执行脚本!" && exit 1
 
-mkdir -p "$CONFIG_DIR"
-touch "$DOMAIN_FILE"
-
-# ================= 公共函数 =================
-install_pkg() {
-    local pkg=$1
-    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
-        apt-get update -qq
-        apt-get install -y "$pkg"
+# ----------------- 基础函数 -----------------
+disable_selinux(){
+    if [ -s /etc/selinux/config ] && grep 'SELINUX=enforcing' /etc/selinux/config; then
+        sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+        setenforce 0
+        echo -e "[${green}Info${plain}] SELinux 已禁用"
     fi
 }
 
-msg() { echo -e "\033[32m[INFO]\033[0m $1"; }
-warn() { echo -e "\033[33m[WARN]\033[0m $1"; }
+check_sys(){
+    local checkType=$1
+    local value=$2
+    local release=''
+    local systemPackage=''
 
-show_domains() {
-    echo "当前关键字列表:"
-    if [ -s "$DOMAIN_FILE" ]; then
-        nl -w2 -s". " "$DOMAIN_FILE"
+    if [[ -f /etc/redhat-release ]]; then
+        release="centos"; systemPackage="yum"
+    elif grep -Eqi "debian|raspbian" /etc/issue; then
+        release="debian"; systemPackage="apt"
+    elif grep -Eqi "ubuntu" /etc/issue; then
+        release="ubuntu"; systemPackage="apt"
+    elif grep -Eqi "centos|red hat|redhat" /etc/issue; then
+        release="centos"; systemPackage="yum"
+    elif grep -Eqi "debian|raspbian" /proc/version; then
+        release="debian"; systemPackage="apt"
+    elif grep -Eqi "ubuntu" /proc/version; then
+        release="ubuntu"; systemPackage="apt"
+    elif grep -Eqi "centos|red hat|redhat" /proc/version; then
+        release="centos"; systemPackage="yum"
+    fi
+
+    if [[ "${checkType}" == "sysRelease" ]]; then
+        [[ "${value}" == "${release}" ]] && return 0 || return 1
+    elif [[ "${checkType}" == "packageManager" ]]; then
+        [[ "${value}" == "${systemPackage}" ]] && return 0 || return 1
+    fi
+}
+
+getversion(){
+    if [[ -s /etc/redhat-release ]]; then
+        grep -oE  "[0-9.]+" /etc/redhat-release
     else
-        echo "(空)"
+        grep -oE  "[0-9.]+" /etc/issue
     fi
 }
 
-# ================= B 机器 smartdns 配置 =================
-apply_smartdns_config() {
-    if [ -z "$A_SERVER_IP" ]; then
-        warn "尚未配置 A 服务器 IP，无法生成 smartdns 配置"
-        return
-    fi
-
-    mkdir -p /etc/smartdns
-    [ -f /etc/smartdns/smartdns.conf ] && cp /etc/smartdns/smartdns.conf /etc/smartdns/smartdns.conf.bak.$(date +%s)
-
-    cat > /etc/smartdns/smartdns.conf <<EOF
-bind [::]:53
-cache-size 10240
-
-# 普通 DNS
-server=$NORMAL_DNS1
-server=$NORMAL_DNS2
-
-# A 服务器（解锁机）
-#A_SERVER_START
-server=$A_SERVER_IP
-EOF
-
-    if [ -s "$DOMAIN_FILE" ]; then
-        while read -r KEY; do
-            [ -z "$KEY" ] && continue
-            echo "domain-rules /.*$KEY.*/ -nameserver $A_SERVER_IP" >> /etc/smartdns/smartdns.conf
-        done < "$DOMAIN_FILE"
-    fi
-
-    cat >> /etc/smartdns/smartdns.conf <<EOF
-#A_SERVER_END
-
-# 默认走普通 DNS
-nameserver /./$NORMAL_DNS1
-
-# 故障切换和测速
-speed-check-mode ping,tcp:80
-EOF
-
-    systemctl enable smartdns
-    systemctl restart smartdns
-    msg "smartdns 配置已更新并重启 (立即生效)"
-}
-
-# ================= B 机器关键字管理 =================
-add_domain() {
-    read -p "请输入关键字(例如 instagram): " KEY
-    if grep -qx "$KEY" "$DOMAIN_FILE"; then
-        warn "关键字已存在: $KEY"
+centosversion(){
+    if check_sys sysRelease centos; then
+        local code=$1
+        local version="$(getversion)"
+        local main_ver=${version%%.*}
+        [[ "$main_ver" == "$code" ]] && return 0 || return 1
     else
-        echo "$KEY" >> "$DOMAIN_FILE"
-        msg "已添加关键字: $KEY"
-        apply_smartdns_config
+        return 1
     fi
 }
 
-del_domain() {
-    show_domains
-    read -p "请输入要删除的序号: " IDX
-    if sed -n "${IDX}p" "$DOMAIN_FILE" >/dev/null 2>&1; then
-        KEY=$(sed -n "${IDX}p" "$DOMAIN_FILE")
-        sed -i "${IDX}d" "$DOMAIN_FILE"
-        msg "已删除关键字: $KEY"
-        apply_smartdns_config
+get_ip(){
+    local IP=$( ip addr | egrep -o '[0-9]{1,3}(\.[0-9]{1,3}){3}' | egrep -v "^192\.168|^172\.1[6-9]\.|^172\.2[0-9]\.|^172\.3[0-2]\.|^10\.|^127\.|^255\.|^0\." | head -n 1 )
+    [ -z ${IP} ] && IP=$( wget -qO- -t1 -T2 ipv4.icanhazip.com )
+    [ -z ${IP} ] && IP=$( wget -qO- -t1 -T2 ipinfo.io/ip )
+    echo ${IP}
+}
+
+check_ip(){
+    local checkip=$1
+    local valid_check=$(echo $checkip|awk -F. '$1<=255&&$2<=255&&$3<=255&&$4<=255{print "yes"}')
+    if echo $checkip|grep -E "^[0-9]{1,3}(\.[0-9]{1,3}){3}$" >/dev/null; then
+        if [ ${valid_check:-no} == "yes" ]; then
+            return 0
+        else
+            echo -e "[${red}Error${plain}] IP $checkip not available!"
+            return 1
+        fi
     else
-        warn "无效序号"
+        echo -e "[${red}Error${plain}] IP format error!"
+        return 1
     fi
 }
 
-manage_domains() {
-    while true; do
-        echo "============================"
-        echo " 域名关键字管理 ($DOMAIN_FILE)"
-        echo "============================"
-        show_domains
-        echo "1) 添加关键字"
-        echo "2) 删除关键字"
-        echo "3) 返回"
-        read -p "请选择 [1-3]: " opt
-        case $opt in
-            1) add_domain ;;
-            2) del_domain ;;
-            3) break ;;
-            *) warn "无效选择" ;;
-        esac
+download(){
+    local filename=${1}
+    echo -e "[${green}Info${plain}] ${filename} 下载中..."
+    wget --no-check-certificate -q -t3 -T60 -O ${1} ${2}
+    [[ $? -ne 0 ]] && echo -e "[${red}Error${plain}] 下载 ${filename} 失败." && exit 1
+}
+
+error_detect_depends(){
+    local command=$1
+    local depend=`echo "${command}" | awk '{print $4}'`
+    echo -e "[${green}Info${plain}] 安装依赖 ${depend} ..."
+    ${command} > /dev/null 2>&1
+    [[ $? -ne 0 ]] && echo -e "[${red}Error${plain}] 安装 ${depend} 失败" && exit 1
+}
+
+config_firewall(){
+    local ports="53 80 443"
+    if centosversion 6; then
+        /etc/init.d/iptables status >/dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            for port in ${ports}; do
+                iptables -L -n | grep -i ${port} >/dev/null 2>&1 || iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${port} -j ACCEPT
+                [[ ${port} == "53" ]] && iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${port} -j ACCEPT
+            done
+            /etc/init.d/iptables save
+            /etc/init.d/iptables restart
+        fi
+    else
+        systemctl status firewalld >/dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            default_zone=$(firewall-cmd --get-default-zone)
+            for port in ${ports}; do
+                firewall-cmd --permanent --zone=${default_zone} --add-port=${port}/tcp
+                [[ ${port} == "53" ]] && firewall-cmd --permanent --zone=${default_zone} --add-port=${port}/udp
+            done
+            firewall-cmd --reload
+        fi
+    fi
+}
+
+install_dependencies(){
+    echo "安装依赖软件..."
+    if check_sys packageManager yum; then
+        yum install -y epel-release yum-utils >/dev/null 2>&1
+        yum_depends=( curl gettext-devel libev-devel pcre-devel perl udns-devel )
+        for depend in ${yum_depends[@]}; do error_detect_depends "yum -y install ${depend}"; done
+    elif check_sys packageManager apt; then
+        apt-get update
+        apt_depends=( curl gettext libev-dev libpcre3-dev libudns-dev )
+        for depend in ${apt_depends[@]}; do error_detect_depends "apt-get -y install ${depend}"; done
+    fi
+}
+
+# ----------------- 安装/卸载逻辑 -----------------
+install_dnsmasq(){
+    netstat -a -n -p | grep LISTEN | grep -P "\d+\.\d+\.\d+\.\d+:53\s+" >/dev/null && echo -e "[${red}Error${plain}] 端口53已被占用" && exit 1
+    echo "安装 Dnsmasq..."
+    install_dependencies
+    if check_sys packageManager yum; then
+        yum install -y dnsmasq >/dev/null 2>&1
+    elif check_sys packageManager apt; then
+        apt-get install -y dnsmasq >/dev/null 2>&1
+    fi
+    download /etc/dnsmasq.d/custom_netflix.conf https://raw.githubusercontent.com/myxuchangbin/dnsmasq_sniproxy_install/master/dnsmasq.conf
+    [ ! -f /usr/sbin/dnsmasq ] && echo -e "[${red}Error${plain}] 安装dnsmasq失败" && exit 1
+    systemctl enable dnsmasq >/dev/null 2>&1
+    systemctl restart dnsmasq >/dev/null 2>&1
+    echo -e "[${green}Info${plain}] Dnsmasq 安装完成"
+}
+
+install_sniproxy(){
+    for port in 80 443; do
+        netstat -a -n -p | grep LISTEN | grep -P "\d+\.\d+\.\d+\.\d+:${port}\s+" >/dev/null && echo -e "[${red}Error${plain}] 端口${port}已被占用" && exit 1
     done
+    install_dependencies
+    echo "安装 SNI Proxy..."
+    if check_sys packageManager yum; then
+        yum install -y sniproxy >/dev/null 2>&1
+    elif check_sys packageManager apt; then
+        apt-get install -y sniproxy >/dev/null 2>&1
+    fi
+    download /etc/sniproxy.conf https://raw.githubusercontent.com/myxuchangbin/dnsmasq_sniproxy_install/master/sniproxy.conf
+    systemctl enable sniproxy >/dev/null 2>&1
+    systemctl restart sniproxy >/dev/null 2>&1
+    echo -e "[${green}Info${plain}] SNI Proxy 安装完成"
 }
 
-# ================= 安装 sniproxy =================
-install_sniproxy() {
-    msg "开始安装 sniproxy..."
-    install_pkg sniproxy
-    mkdir -p /etc/sniproxy
-    cat >/etc/systemd/system/sniproxy.service <<EOF
-[Unit]
-Description=SNI Proxy
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/sbin/sniproxy -c /etc/sniproxy/sniproxy.conf
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable sniproxy
-    systemctl restart sniproxy
-    msg "sniproxy 安装完成并已启动"
-}
-
-# ================= A 机器安装 =================
-install_A() {
-    msg "开始安装 A 机器 (dnsmasq + HTTPS 透明代理)..."
-
-    install_pkg dnsmasq
-    install_pkg stunnel4
-    install_pkg iptables
-    install_pkg curl
+install_all(){
+    disable_selinux
+    config_firewall
+    install_dnsmasq
     install_sniproxy
-    install_pkg iptables-persistent
+}
 
-    # 处理 systemd-resolved 占用 53 端口
-    if systemctl is-active --quiet systemd-resolved; then
-        msg "检测到 systemd-resolved 正在运行，占用 53 端口"
-        systemctl stop systemd-resolved
-        systemctl disable systemd-resolved
-        rm -f /etc/resolv.conf
-        echo "nameserver 127.0.0.1" > /etc/resolv.conf
-        msg "已停止 systemd-resolved 并指向本地 dnsmasq"
+undnsmasq(){
+    echo -e "[${green}Info${plain}] 卸载 Dnsmasq..."
+    systemctl stop dnsmasq >/dev/null 2>&1
+    systemctl disable dnsmasq >/dev/null 2>&1
+    if check_sys packageManager yum; then
+        yum remove -y dnsmasq >/dev/null 2>&1
+    elif check_sys packageManager apt; then
+        apt-get remove -y dnsmasq dnsmasq-base >/dev/null 2>&1
     fi
-
-    # 备份旧配置
-    [ -f /etc/dnsmasq.conf ] && cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak.$(date +%s)
-
-    # Debian/Ubuntu 兼容 dnsmasq 配置
-    cat > /etc/dnsmasq.conf <<EOF
-port=53
-no-resolv
-log-queries
-log-facility=/var/log/dnsmasq.log
-server=$NORMAL_DNS1
-server=$NORMAL_DNS2
-EOF
-
-    systemctl enable dnsmasq
-    systemctl restart dnsmasq
-    msg "dnsmasq 启动完成"
-
-    # sniproxy 配置
-    cat > /etc/sniproxy/sniproxy.conf <<EOF
-user nobody
-pidfile /var/run/sniproxy.pid
-
-listen 127.0.0.1:8443 {
-    proto tls
+    rm -f /etc/dnsmasq.d/custom_netflix.conf
+    echo -e "[${green}Info${plain}] Dnsmasq 卸载完成"
 }
 
-table {
-    .* 127.0.0.1:8443
-}
-EOF
-    systemctl restart sniproxy
-
-    # stunnel 配置
-    mkdir -p /etc/stunnel
-    cat > /etc/stunnel/stunnel.conf <<EOF
-pid = /var/run/stunnel.pid
-foreground = no
-[https]
-accept = 8443
-connect = 127.0.0.1:8443
-cert = /etc/stunnel/stunnel.pem
-EOF
-    if [ ! -f /etc/stunnel/stunnel.pem ]; then
-        openssl req -new -x509 -days 3650 -nodes \
-        -out /etc/stunnel/stunnel.pem -keyout /etc/stunnel/stunnel.pem \
-        -subj "/CN=A-Machine"
+unsniproxy(){
+    echo -e "[${green}Info${plain}] 卸载 SNI Proxy..."
+    systemctl stop sniproxy >/dev/null 2>&1
+    systemctl disable sniproxy >/dev/null 2>&1
+    if check_sys packageManager yum; then
+        yum remove -y sniproxy >/dev/null 2>&1
+    elif check_sys packageManager apt; then
+        apt-get remove -y sniproxy >/dev/null 2>&1
     fi
-    systemctl enable stunnel4
-    systemctl restart stunnel4
-
-    # iptables HTTPS 重定向
-    iptables -t nat -F
-    iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 8443
-    netfilter-persistent save
-    netfilter-persistent reload
-
-    msg "A 机器部署完成，HTTPS透明代理生效，iptables规则已保存"
+    rm -f /etc/sniproxy.conf
+    echo -e "[${green}Info${plain}] SNI Proxy 卸载完成"
 }
 
-# ================= B 机器安装 =================
-install_B() {
+# ----------------- 菜单 -----------------
+hello(){
+    echo ""
+    echo -e "${yellow}Dnsmasq + SNI Proxy 自助安装脚本${plain}"
+    echo ""
+}
+
+show_menu(){
     while true; do
-        echo "==========================================="
-        echo " B 机器 (智能分流客户端) 菜单"
-        echo "==========================================="
-        echo "1) 配置并安装 smartdns"
-        echo "2) 管理解锁关键字 (立即生效)"
-        echo "3) 返回主菜单"
-        read -p "请选择 [1-3]: " subchoice
-
-        case $subchoice in
+        clear
+        hello
+        echo "========================================"
+        echo " 1) 安装服务"
+        echo " 2) 卸载服务"
+        echo " 3) 更新/重启服务"
+        echo " 4) 退出"
+        echo "========================================"
+        read -p "请输入选择 [1-4]: " menu_choice
+        case $menu_choice in
             1)
-                read -p "请输入 A 机器公网 IP: " A_SERVER_IP
-                msg "使用 A 机器 IP: $A_SERVER_IP"
-                install_pkg smartdns
-                apply_smartdns_config
-
-                grep -q "127.0.0.1" /etc/resolv.conf || sed -i '1inameserver 127.0.0.1' /etc/resolv.conf
-
-                CHECK_SCRIPT="/usr/local/bin/check_a_dns.sh"
-                cat > "$CHECK_SCRIPT" <<EOF
-#!/bin/bash
-SMARTDNS_CONF="/etc/smartdns/smartdns.conf"
-A_SERVER_IP="$A_SERVER_IP"
-DOMAIN_FILE="$DOMAIN_FILE"
-TEST_DOMAIN="$TEST_DOMAIN"
-
-check_dns() {
-    dig @\$A_SERVER_IP \$TEST_DOMAIN +time=2 +tries=1 +short >/dev/null 2>&1
-}
-
-update_smartdns() {
-    sed -i "/#A_SERVER_START/,/#A_SERVER_END/d" "\$SMARTDNS_CONF"
-    {
-        echo "#A_SERVER_START"
-        echo "server \$A_SERVER_IP"
-        while read -r KEY; do
-            [ -z "\$KEY" ] && continue
-            echo "domain-rules /.*\$KEY.*/ -nameserver \$A_SERVER_IP"
-        done < "\$DOMAIN_FILE"
-        echo "#A_SERVER_END"
-    } >> "\$SMARTDNS_CONF"
-    systemctl restart smartdns
-}
-
-if check_dns; then
-    update_smartdns
-else
-    sed -i "/#A_SERVER_START/,/#A_SERVER_END/d" "\$SMARTDNS_CONF"
-    systemctl restart smartdns
-fi
-EOF
-                chmod +x "$CHECK_SCRIPT"
-                (crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT"; echo "* * * * * $CHECK_SCRIPT >> /var/log/check_a_dns.log 2>&1") | crontab -
-                msg "健康检测已启用，每分钟检查一次 A 机器 DNS"
-                ;;
-            2) manage_domains ;;
-            3) break ;;
-            *) warn "无效选择" ;;
+                install_all
+                echo -e "${green}安装完成!${plain}"
+                read -p "按回车返回菜单..." ;;
+            2)
+                confirm && undnsmasq && unsniproxy
+                echo -e "${green}卸载完成!${plain}"
+                read -p "按回车返回菜单..." ;;
+            3)
+                echo -e "${green}正在重启 Dnsmasq 和 SNI Proxy...${plain}"
+                systemctl restart dnsmasq sniproxy >/dev/null 2>&1
+                echo -e "${green}重启完成!${plain}"
+                read -p "按回车返回菜单..." ;;
+            4) exit 0 ;;
+            *) echo "无效选择"; sleep 2 ;;
         esac
     done
 }
 
-# ================= 主入口 =================
-while true; do
-    echo "==========================================="
-    echo " DNS 解锁一键脚本 (A + B 通用) - Debian/Ubuntu 版"
-    echo "==========================================="
-    echo " 1) 安装 A 机器 (dnsmasq + HTTPS 透明代理)"
-    echo " 2) 安装 B 机器 (smartdns 分流客户端)"
-    echo " 3) 退出"
-    read -p "请选择模式 [1-3]: " choice
-
-    case $choice in
-        1) install_A ;;
-        2) install_B ;;
-        3) exit 0 ;;
-        *) warn "无效选择" ;;
-    esac
-done
+# ----------------- 主入口 -----------------
+show_menu
