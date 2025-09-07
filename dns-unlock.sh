@@ -1,8 +1,9 @@
 #!/bin/bash
 # ===========================================
 # DNS 解锁一键脚本 (A + B 通用)
-# 支持 A: dnsmasq+SNIProxy，B: smartdns 智能分流
-# 作者: xhrm
+# 支持 A: dnsmasq + HTTPS透明代理 + 永久iptables
+# 支持 B: smartdns 分流客户端，关键字立即生效
+# 作者: xhrm (最终整合版本)
 # ===========================================
 
 CONFIG_DIR="/etc/dns-unlock"
@@ -45,6 +46,7 @@ apply_smartdns_config() {
         return
     fi
 
+    mkdir -p /etc/smartdns
     cat > /etc/smartdns/smartdns.conf <<EOF
 bind [::]:53
 cache-size 10240
@@ -75,11 +77,12 @@ nameserver /./$NORMAL_DNS1
 speed-check-mode ping,tcp:80
 EOF
 
+    systemctl enable smartdns
     systemctl restart smartdns
     msg "smartdns 配置已更新并重启 (立即生效)"
 }
 
-# ================= B 机器关键字管理 =================
+# ================= B 机器关键字管理（立即生效） =================
 add_domain() {
     read -p "请输入关键字(例如 instagram): " KEY
     if grep -qx "$KEY" "$DOMAIN_FILE"; then
@@ -88,6 +91,7 @@ add_domain() {
         echo "$KEY" >> "$DOMAIN_FILE"
         msg "已添加关键字: $KEY"
         apply_smartdns_config
+        msg "smartdns 已刷新，关键字立即生效"
     fi
 }
 
@@ -99,6 +103,7 @@ del_domain() {
         sed -i "${IDX}d" "$DOMAIN_FILE"
         msg "已删除关键字: $KEY"
         apply_smartdns_config
+        msg "smartdns 已刷新，关键字删除立即生效"
     else
         warn "无效序号"
     fi
@@ -123,15 +128,41 @@ manage_domains() {
     done
 }
 
-# ================= A 机器安装 =================
+# ================= A 机器安装 (HTTPS 透明代理 + 永久iptables) =================
 install_A() {
-    msg "开始安装 A 机器 (dnsmasq + SNIProxy)..."
+    msg "开始安装 A 机器 (dnsmasq + HTTPS 透明代理)..."
+
+    # 安装基础包
     install_pkg dnsmasq
     install_pkg stunnel
-    install_pkg sniproxy
+    install_pkg iptables
+    install_pkg iproute
+    install_pkg curl
 
+    # 安装 sniproxy
+    if [ -f /etc/redhat-release ]; then
+        install_pkg epel-release
+        if ! yum list available sniproxy >/dev/null 2>&1; then
+            msg "CentOS 默认仓库没有 sniproxy，尝试源码安装..."
+            install_pkg git gcc make autoconf automake libtool pkgconfig
+            install_pkg libev-devel pcre-devel openssl-devel
+            cd /usr/local/src
+            git clone https://github.com/dlundquist/sniproxy.git
+            cd sniproxy
+            ./autogen.sh
+            ./configure --prefix=/usr
+            make && make install
+        else
+            yum install -y sniproxy
+        fi
+    else
+        install_pkg sniproxy
+    fi
+
+    # 备份 dnsmasq 配置
     cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak.$(date +%s)
 
+    # 配置 dnsmasq
     cat > /etc/dnsmasq.conf <<EOF
 port=53
 no-resolv
@@ -144,25 +175,60 @@ EOF
     systemctl enable dnsmasq
     systemctl restart dnsmasq
 
-    # SNIProxy 配置示例，可根据需求修改
-    cat > /etc/sniproxy.conf <<EOF
+    # 配置 sniproxy
+    mkdir -p /etc/sniproxy
+    cat > /etc/sniproxy/sniproxy.conf <<EOF
 user nobody
 pidfile /var/run/sniproxy.pid
 
-listen 443 {
+listen 127.0.0.1:8443 {
     proto tls
 }
 
 table {
-    .* 127.0.0.1:443
+    .* 127.0.0.1:8443
 }
 EOF
 
     systemctl enable sniproxy
     systemctl restart sniproxy
 
-    msg "A 机器部署完成，所有域名均可解锁。"
-    msg "提示：domains.txt 仅用于 B 机器分流，不影响 A 机器。"
+    # 配置 stunnel（透明代理 TLS）
+    mkdir -p /etc/stunnel
+    cat > /etc/stunnel/stunnel.conf <<EOF
+pid = /var/run/stunnel.pid
+foreground = yes
+[https]
+accept = 443
+connect = 127.0.0.1:8443
+cert = /etc/stunnel/stunnel.pem
+EOF
+
+    # 生成自签名证书
+    if [ ! -f /etc/stunnel/stunnel.pem ]; then
+        openssl req -new -x509 -days 3650 -nodes -out /etc/stunnel/stunnel.pem -keyout /etc/stunnel/stunnel.pem -subj "/CN=A-Machine"
+    fi
+
+    systemctl enable stunnel
+    systemctl restart stunnel
+
+    # iptables 转发 HTTPS 流量到 stunnel
+    iptables -t nat -F
+    iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 443
+
+    # ================= 保存 iptables NAT 规则 =================
+    if [ -f /etc/redhat-release ]; then
+        install_pkg iptables-services
+        iptables-save > /etc/sysconfig/iptables
+        systemctl enable iptables
+        systemctl restart iptables
+    else
+        install_pkg iptables-persistent
+        netfilter-persistent save
+        netfilter-persistent reload
+    fi
+
+    msg "A 机器 HTTPS 透明代理部署完成，iptables 规则已保存，重启依然生效。"
 }
 
 # ================= B 机器安装 =================
@@ -245,7 +311,7 @@ while true; do
     echo "==========================================="
     echo " DNS 解锁一键脚本 (A + B 通用)"
     echo "==========================================="
-    echo " 1) 安装 A 机器 (dnsmasq + SNIProxy)"
+    echo " 1) 安装 A 机器 (dnsmasq + HTTPS 透明代理)"
     echo " 2) 安装 B 机器 (smartdns 分流客户端)"
     echo " 3) 退出"
     read -p "请选择模式 [1-3]: " choice
