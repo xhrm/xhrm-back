@@ -1,7 +1,7 @@
 #!/bin/bash
 # ===========================================
 # DNS 解锁一键脚本 (A + B 通用)
-# 支持 A: dnsmasq + HTTPS透明代理 + 永久iptables
+# 支持 A: dnsmasq + sniproxy + stunnel HTTPS透明代理 + 永久iptables
 # 支持 B: smartdns 分流客户端，关键字立即生效
 # 作者: xhrm (最终整合版本)
 # ===========================================
@@ -16,7 +16,7 @@ TEST_DOMAIN="netflix.com"
 mkdir -p $CONFIG_DIR
 touch $DOMAIN_FILE
 
-# ========== 公共函数 ==========
+# ================= 公共函数 =================
 install_pkg() {
     if [ -f /etc/redhat-release ]; then
         yum install -y epel-release
@@ -82,7 +82,7 @@ EOF
     msg "smartdns 配置已更新并重启 (立即生效)"
 }
 
-# ================= B 机器关键字管理（立即生效） =================
+# ================= B 机器关键字管理 =================
 add_domain() {
     read -p "请输入关键字(例如 instagram): " KEY
     if grep -qx "$KEY" "$DOMAIN_FILE"; then
@@ -128,7 +128,63 @@ manage_domains() {
     done
 }
 
-# ================= A 机器安装 (HTTPS 透明代理 + 永久iptables) =================
+# ================= 安装 sniproxy（源码或仓库） =================
+install_sniproxy() {
+    msg "开始安装 sniproxy..."
+    if [ -f /etc/redhat-release ]; then
+        yum install -y epel-release
+        yum install -y git gcc make autoconf automake libtool pkgconfig libev-devel pcre-devel openssl-devel
+
+        if yum list available sniproxy >/dev/null 2>&1; then
+            yum install -y sniproxy
+        else
+            msg "CentOS 默认仓库没有 sniproxy，开始源码编译..."
+            cd /usr/local/src
+            git clone https://github.com/dlundquist/sniproxy.git
+            cd sniproxy
+            ./autogen.sh
+            ./configure --prefix=/usr
+            make && make install
+        fi
+    else
+        apt-get update
+        apt-get install -y git build-essential autoconf automake libtool pkg-config libev-dev libpcre3-dev libssl-dev devscripts dh-autoreconf
+
+        if apt-cache policy sniproxy | grep -q 'Candidate:'; then
+            apt-get install -y sniproxy
+        else
+            msg "Ubuntu/Debian 仓库没有 sniproxy，开始源码编译..."
+            cd /usr/local/src
+            git clone https://github.com/dlundquist/sniproxy.git
+            cd sniproxy
+            ./autogen.sh
+            ./configure --prefix=/usr
+            make && make install
+        fi
+    fi
+
+    # 创建 systemd 服务
+    cat >/etc/systemd/system/sniproxy.service <<EOF
+[Unit]
+Description=SNI Proxy
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/sniproxy -c /etc/sniproxy/sniproxy.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable sniproxy
+    systemctl start sniproxy
+    msg "sniproxy 安装完成并已启动"
+}
+
+# ================= A 机器安装 =================
 install_A() {
     msg "开始安装 A 机器 (dnsmasq + HTTPS 透明代理)..."
 
@@ -140,24 +196,7 @@ install_A() {
     install_pkg curl
 
     # 安装 sniproxy
-    if [ -f /etc/redhat-release ]; then
-        install_pkg epel-release
-        if ! yum list available sniproxy >/dev/null 2>&1; then
-            msg "CentOS 默认仓库没有 sniproxy，尝试源码安装..."
-            install_pkg git gcc make autoconf automake libtool pkgconfig
-            install_pkg libev-devel pcre-devel openssl-devel
-            cd /usr/local/src
-            git clone https://github.com/dlundquist/sniproxy.git
-            cd sniproxy
-            ./autogen.sh
-            ./configure --prefix=/usr
-            make && make install
-        else
-            yum install -y sniproxy
-        fi
-    else
-        install_pkg sniproxy
-    fi
+    install_sniproxy
 
     # 备份 dnsmasq 配置
     cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak.$(date +%s)
@@ -190,10 +229,9 @@ table {
 }
 EOF
 
-    systemctl enable sniproxy
     systemctl restart sniproxy
 
-    # 配置 stunnel（透明代理 TLS）
+    # 配置 stunnel
     mkdir -p /etc/stunnel
     cat > /etc/stunnel/stunnel.conf <<EOF
 pid = /var/run/stunnel.pid
@@ -204,7 +242,6 @@ connect = 127.0.0.1:8443
 cert = /etc/stunnel/stunnel.pem
 EOF
 
-    # 生成自签名证书
     if [ ! -f /etc/stunnel/stunnel.pem ]; then
         openssl req -new -x509 -days 3650 -nodes -out /etc/stunnel/stunnel.pem -keyout /etc/stunnel/stunnel.pem -subj "/CN=A-Machine"
     fi
@@ -212,11 +249,11 @@ EOF
     systemctl enable stunnel
     systemctl restart stunnel
 
-    # iptables 转发 HTTPS 流量到 stunnel
+    # iptables 转发 HTTPS
     iptables -t nat -F
     iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 443
 
-    # ================= 保存 iptables NAT 规则 =================
+    # 保存 iptables
     if [ -f /etc/redhat-release ]; then
         install_pkg iptables-services
         iptables-save > /etc/sysconfig/iptables
@@ -228,7 +265,7 @@ EOF
         netfilter-persistent reload
     fi
 
-    msg "A 机器 HTTPS 透明代理部署完成，iptables 规则已保存，重启依然生效。"
+    msg "A 机器部署完成，HTTPS透明代理生效，iptables规则永久保存"
 }
 
 # ================= B 机器安装 =================
