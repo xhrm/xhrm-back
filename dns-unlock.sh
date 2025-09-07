@@ -1,6 +1,7 @@
 #!/bin/bash
 # ===========================================
 # DNS 解锁一键脚本 (A + B 通用)
+# 支持 A: dnsmasq+SNIProxy，B: smartdns 智能分流
 # 作者: xhrm
 # ===========================================
 
@@ -37,6 +38,7 @@ show_domains() {
     fi
 }
 
+# ================= B 机器 smartdns 配置 =================
 apply_smartdns_config() {
     if [ -z "$A_SERVER_IP" ]; then
         warn "尚未配置 A 服务器 IP，无法生成 smartdns 配置"
@@ -47,11 +49,11 @@ apply_smartdns_config() {
 bind [::]:53
 cache-size 10240
 
-# 正常DNS
+# 普通 DNS
 server $NORMAL_DNS1
 server $NORMAL_DNS2
 
-# A服务器（初始启用）
+# A 服务器（解锁机）
 #A_SERVER_START
 server $A_SERVER_IP
 EOF
@@ -66,7 +68,7 @@ EOF
     cat >> /etc/smartdns/smartdns.conf <<EOF
 #A_SERVER_END
 
-# 其它域名走正常DNS
+# 默认走普通 DNS
 nameserver /./$NORMAL_DNS1
 
 # 故障切换和测速
@@ -77,8 +79,9 @@ EOF
     msg "smartdns 配置已更新并重启 (立即生效)"
 }
 
+# ================= B 机器关键字管理 =================
 add_domain() {
-    read -p "请输入要添加的关键字(例如: instagram): " KEY
+    read -p "请输入关键字(例如 instagram): " KEY
     if grep -qx "$KEY" "$DOMAIN_FILE"; then
         warn "关键字已存在: $KEY"
     else
@@ -107,11 +110,9 @@ manage_domains() {
         echo " 域名关键字管理 ($DOMAIN_FILE)"
         echo "============================"
         show_domains
-        echo "----------------------------"
         echo "1) 添加关键字"
         echo "2) 删除关键字"
-        echo "3) 返回上级菜单"
-        echo "============================"
+        echo "3) 返回"
         read -p "请选择 [1-3]: " opt
         case $opt in
             1) add_domain ;;
@@ -122,10 +123,12 @@ manage_domains() {
     done
 }
 
-# ========== A 机器安装 ==========
+# ================= A 机器安装 =================
 install_A() {
-    msg "开始安装 A 机器 (解锁 DNS 服务)..."
+    msg "开始安装 A 机器 (dnsmasq + SNIProxy)..."
     install_pkg dnsmasq
+    install_pkg stunnel
+    install_pkg sniproxy
 
     cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak.$(date +%s)
 
@@ -134,17 +137,35 @@ port=53
 no-resolv
 log-queries
 log-facility=/var/log/dnsmasq.log
-server=$NORMAL_DNS1
-server=$NORMAL_DNS2
+server $NORMAL_DNS1
+server $NORMAL_DNS2
 EOF
 
     systemctl enable dnsmasq
     systemctl restart dnsmasq
 
-    msg "A 机器部署完成！提供普通解析 + 解锁服务"
+    # SNIProxy 配置示例，可根据需求修改
+    cat > /etc/sniproxy.conf <<EOF
+user nobody
+pidfile /var/run/sniproxy.pid
+
+listen 443 {
+    proto tls
 }
 
-# ========== B 机器安装 ==========
+table {
+    .* 127.0.0.1:443
+}
+EOF
+
+    systemctl enable sniproxy
+    systemctl restart sniproxy
+
+    msg "A 机器部署完成，所有域名均可解锁。"
+    msg "提示：domains.txt 仅用于 B 机器分流，不影响 A 机器。"
+}
+
+# ================= B 机器安装 =================
 install_B() {
     while true; do
         echo "==========================================="
@@ -153,19 +174,17 @@ install_B() {
         echo "1) 配置并安装 smartdns"
         echo "2) 管理解锁关键字 (立即生效)"
         echo "3) 返回主菜单"
-        echo "==========================================="
         read -p "请选择 [1-3]: " subchoice
 
         case $subchoice in
             1)
-                read -p "请输入 A 机器的公网IP: " A_SERVER_IP
+                read -p "请输入 A 机器公网 IP: " A_SERVER_IP
                 msg "使用 A 机器 IP: $A_SERVER_IP"
 
                 install_pkg smartdns
                 apply_smartdns_config
 
                 echo "nameserver 127.0.0.1" > /etc/resolv.conf
-
                 msg "smartdns 已配置完成！"
 
                 # 健康检测脚本
@@ -221,15 +240,14 @@ EOF
     done
 }
 
-# ========== 主入口 ==========
+# ================= 主入口 =================
 while true; do
     echo "==========================================="
     echo " DNS 解锁一键脚本 (A + B 通用)"
     echo "==========================================="
-    echo " 1) 安装 A 机器 (解锁 DNS 服务)"
-    echo " 2) 安装 B 机器 (智能分流客户端)"
+    echo " 1) 安装 A 机器 (dnsmasq + SNIProxy)"
+    echo " 2) 安装 B 机器 (smartdns 分流客户端)"
     echo " 3) 退出"
-    echo "==========================================="
     read -p "请选择模式 [1-3]: " choice
 
     case $choice in
