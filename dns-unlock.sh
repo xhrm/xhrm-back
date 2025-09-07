@@ -1,6 +1,6 @@
 #!/bin/bash
 # ===========================================
-# DNS 解锁一键脚本 (A + B 通用) - 完整优化版
+# DNS 解锁一键脚本 (A + B 通用) - Debian/Ubuntu 版
 # 支持 A: dnsmasq + sniproxy + stunnel HTTPS透明代理 + 永久iptables
 # 支持 B: smartdns 分流客户端，关键字立即生效
 # 作者: xhrm (优化完整版)
@@ -21,16 +21,9 @@ touch "$DOMAIN_FILE"
 # ================= 公共函数 =================
 install_pkg() {
     local pkg=$1
-    if [ -f /etc/redhat-release ]; then
-        yum install -y epel-release || true
-        if ! rpm -q "$pkg" >/dev/null 2>&1; then
-            yum install -y "$pkg"
-        fi
-    else
-        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
-            apt-get update -qq
-            apt-get install -y "$pkg"
-        fi
+    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+        apt-get update -qq
+        apt-get install -y "$pkg"
     fi
 }
 
@@ -138,49 +131,7 @@ manage_domains() {
 # ================= 安装 sniproxy =================
 install_sniproxy() {
     msg "开始安装 sniproxy..."
-    
-    if [ -f /etc/redhat-release ]; then
-        deps=(git gcc make autoconf automake libtool pkgconfig libev-devel pcre-devel openssl-devel)
-        for pkg in "${deps[@]}"; do install_pkg "$pkg"; done
-
-        if yum list available sniproxy >/dev/null 2>&1; then
-            yum install -y sniproxy
-        else
-            msg "CentOS 默认仓库没有 sniproxy，源码编译安装..."
-            cd /usr/local/src
-            [ -d sniproxy ] && rm -rf sniproxy
-            git clone https://github.com/dlundquist/sniproxy.git
-            cd sniproxy
-            ./autogen.sh
-            ./configure --prefix=/usr/local || { warn "configure 失败，请检查依赖"; exit 1; }
-            make || { warn "make 编译失败"; exit 1; }
-            make install || { warn "make install 失败"; exit 1; }
-        fi
-    else
-        deps=(git build-essential autoconf automake libtool pkg-config libev-dev libpcre3-dev libssl-dev dh-autoreconf)
-        for pkg in "${deps[@]}"; do install_pkg "$pkg"; done
-
-        if apt-cache policy sniproxy | grep -q 'Candidate:'; then
-            apt-get install -y sniproxy
-        else
-            msg "Ubuntu/Debian 仓库没有 sniproxy，源码编译安装..."
-            cd /usr/local/src
-            [ -d sniproxy ] && rm -rf sniproxy
-            git clone https://github.com/dlundquist/sniproxy.git
-            cd sniproxy
-            ./autogen.sh
-            ./configure --prefix=/usr/local || { warn "configure 失败，请检查依赖"; exit 1; }
-            make || { warn "make 编译失败"; exit 1; }
-            make install || { warn "make install 失败"; exit 1; }
-        fi
-    fi
-
-    SNIPROXY_BIN=$(command -v sniproxy || echo "/usr/local/sbin/sniproxy")
-    if [ ! -x "$SNIPROXY_BIN" ]; then
-        warn "sniproxy 安装失败，找不到可执行文件"
-        exit 1
-    fi
-
+    install_pkg sniproxy
     mkdir -p /etc/sniproxy
     cat >/etc/systemd/system/sniproxy.service <<EOF
 [Unit]
@@ -189,7 +140,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$SNIPROXY_BIN -c /etc/sniproxy/sniproxy.conf
+ExecStart=/usr/sbin/sniproxy -c /etc/sniproxy/sniproxy.conf
 Restart=on-failure
 
 [Install]
@@ -206,7 +157,7 @@ EOF
 install_A() {
     msg "开始安装 A 机器 (dnsmasq + HTTPS 透明代理)..."
     install_pkg dnsmasq
-    install_pkg stunnel
+    install_pkg stunnel4
     install_pkg iptables
     install_pkg curl
     install_sniproxy
@@ -253,22 +204,14 @@ EOF
         openssl req -new -x509 -days 3650 -nodes -out /etc/stunnel/stunnel.pem -keyout /etc/stunnel/stunnel.pem -subj "/CN=A-Machine"
     fi
 
-    systemctl enable stunnel
-    systemctl restart stunnel
+    systemctl enable stunnel4
+    systemctl restart stunnel4
 
     iptables -t nat -F
     iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 8443
-
-    if [ -f /etc/redhat-release ]; then
-        install_pkg iptables-services
-        iptables-save > /etc/sysconfig/iptables
-        systemctl enable iptables
-        systemctl restart iptables
-    else
-        install_pkg iptables-persistent
-        netfilter-persistent save
-        netfilter-persistent reload
-    fi
+    install_pkg iptables-persistent
+    netfilter-persistent save
+    netfilter-persistent reload
 
     msg "A 机器部署完成，HTTPS透明代理生效，iptables规则已保存"
 }
@@ -291,11 +234,7 @@ install_B() {
                 install_pkg smartdns
                 apply_smartdns_config
 
-                if command -v resolvectl >/dev/null 2>&1; then
-                    resolvectl dns lo 127.0.0.1
-                else
-                    grep -q "127.0.0.1" /etc/resolv.conf || sed -i '1inameserver 127.0.0.1' /etc/resolv.conf
-                fi
+                grep -q "127.0.0.1" /etc/resolv.conf || sed -i '1inameserver 127.0.0.1' /etc/resolv.conf
 
                 CHECK_SCRIPT="/usr/local/bin/check_a_dns.sh"
                 cat > "$CHECK_SCRIPT" <<EOF
@@ -344,7 +283,7 @@ EOF
 # ================= 主入口 =================
 while true; do
     echo "==========================================="
-    echo " DNS 解锁一键脚本 (A + B 通用) - 完整优化版"
+    echo " DNS 解锁一键脚本 (A + B 通用) - Debian/Ubuntu 版"
     echo "==========================================="
     echo " 1) 安装 A 机器 (dnsmasq + HTTPS 透明代理)"
     echo " 2) 安装 B 机器 (smartdns 分流客户端)"
