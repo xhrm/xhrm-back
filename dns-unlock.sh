@@ -128,13 +128,32 @@ manage_domains() {
     done
 }
 
-# ================= 安装 sniproxy（源码或仓库） =================
+# ================= 安装 sniproxy（源码或仓库，自动升级 autoconf） =================
 install_sniproxy() {
     msg "开始安装 sniproxy..."
     if [ -f /etc/redhat-release ]; then
+        # 安装依赖
         yum install -y epel-release
-        yum install -y git gcc make autoconf automake libtool pkgconfig libev-devel pcre-devel openssl-devel
+        yum install -y git gcc make automake libtool pkgconfig libev-devel pcre-devel openssl-devel m4
 
+        # 升级 autoconf 至 >=2.71
+        if [ -x "$(command -v autoconf)" ]; then
+            version=$(autoconf --version | head -n1 | awk '{print $4}')
+            major=$(echo $version | cut -d. -f1)
+            minor=$(echo $version | cut -d. -f2)
+            if [ "$major" -lt 2 ] || ([ "$major" -eq 2 ] && [ "$minor" -lt 71 ]); then
+                msg "CentOS autoconf <2.71，开始升级..."
+                cd /usr/local/src
+                curl -LO http://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz
+                tar xf autoconf-2.71.tar.gz
+                cd autoconf-2.71
+                ./configure --prefix=/usr/local
+                make && make install
+                export PATH=/usr/local/bin:$PATH
+            fi
+        fi
+
+        # 尝试安装仓库版本
         if yum list available sniproxy >/dev/null 2>&1; then
             yum install -y sniproxy
         else
@@ -147,9 +166,11 @@ install_sniproxy() {
             make && make install
         fi
     else
+        # Debian/Ubuntu
         apt-get update
-        apt-get install -y git build-essential autoconf automake libtool pkg-config libev-dev libpcre3-dev libssl-dev devscripts dh-autoreconf
+        apt-get install -y git build-essential autoconf automake libtool pkg-config libev-dev libpcre3-dev libssl-dev dh-autoreconf
 
+        # 尝试仓库安装
         if apt-cache policy sniproxy | grep -q 'Candidate:'; then
             apt-get install -y sniproxy
         else
@@ -163,7 +184,7 @@ install_sniproxy() {
         fi
     fi
 
-    # 创建 systemd 服务
+    # systemd 服务文件
     cat >/etc/systemd/system/sniproxy.service <<EOF
 [Unit]
 Description=SNI Proxy
@@ -198,10 +219,8 @@ install_A() {
     # 安装 sniproxy
     install_sniproxy
 
-    # 备份 dnsmasq 配置
+    # dnsmasq 配置
     cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak.$(date +%s)
-
-    # 配置 dnsmasq
     cat > /etc/dnsmasq.conf <<EOF
 port=53
 no-resolv
@@ -210,11 +229,10 @@ log-facility=/var/log/dnsmasq.log
 server $NORMAL_DNS1
 server $NORMAL_DNS2
 EOF
-
     systemctl enable dnsmasq
     systemctl restart dnsmasq
 
-    # 配置 sniproxy
+    # sniproxy 配置
     mkdir -p /etc/sniproxy
     cat > /etc/sniproxy/sniproxy.conf <<EOF
 user nobody
@@ -228,10 +246,9 @@ table {
     .* 127.0.0.1:8443
 }
 EOF
-
     systemctl restart sniproxy
 
-    # 配置 stunnel
+    # stunnel 配置
     mkdir -p /etc/stunnel
     cat > /etc/stunnel/stunnel.conf <<EOF
 pid = /var/run/stunnel.pid
@@ -245,7 +262,6 @@ EOF
     if [ ! -f /etc/stunnel/stunnel.pem ]; then
         openssl req -new -x509 -days 3650 -nodes -out /etc/stunnel/stunnel.pem -keyout /etc/stunnel/stunnel.pem -subj "/CN=A-Machine"
     fi
-
     systemctl enable stunnel
     systemctl restart stunnel
 
@@ -330,10 +346,8 @@ else
     fi
 fi
 EOF
-
                 chmod +x $CHECK_SCRIPT
                 (crontab -l 2>/dev/null; echo "* * * * * $CHECK_SCRIPT >> /var/log/check_a_dns.log 2>&1") | crontab -
-
                 msg "健康检测已启用，每分钟检查一次 A 机器 DNS"
                 ;;
             2) manage_domains ;;
