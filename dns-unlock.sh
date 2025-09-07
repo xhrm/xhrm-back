@@ -1,9 +1,8 @@
 #!/bin/bash
 # ===========================================
-# DNS 解锁一键脚本 (A + B 通用)
-# 支持 A: dnsmasq + sniproxy + stunnel HTTPS透明代理 + 永久iptables
+# DNS 解锁一键脚本 (Debian/Ubuntu)
+# 支持 A: dnsmasq + sniproxy + stunnel HTTPS透明代理
 # 支持 B: smartdns 分流客户端，关键字立即生效
-# 作者: xhrm (最终整合版本)
 # ===========================================
 
 CONFIG_DIR="/etc/dns-unlock"
@@ -18,13 +17,8 @@ touch $DOMAIN_FILE
 
 # ================= 公共函数 =================
 install_pkg() {
-    if [ -f /etc/redhat-release ]; then
-        yum install -y epel-release
-        yum install -y $1
-    else
-        apt-get update
-        apt-get install -y $1
-    fi
+    apt-get update
+    apt-get install -y $1
 }
 
 msg() { echo -e "\033[32m[INFO]\033[0m $1"; }
@@ -91,7 +85,6 @@ add_domain() {
         echo "$KEY" >> "$DOMAIN_FILE"
         msg "已添加关键字: $KEY"
         apply_smartdns_config
-        msg "smartdns 已刷新，关键字立即生效"
     fi
 }
 
@@ -103,7 +96,6 @@ del_domain() {
         sed -i "${IDX}d" "$DOMAIN_FILE"
         msg "已删除关键字: $KEY"
         apply_smartdns_config
-        msg "smartdns 已刷新，关键字删除立即生效"
     else
         warn "无效序号"
     fi
@@ -128,63 +120,27 @@ manage_domains() {
     done
 }
 
-# ================= 安装 sniproxy（源码或仓库，自动升级 autoconf） =================
+# ================= 安装 sniproxy =================
 install_sniproxy() {
     msg "开始安装 sniproxy..."
-    if [ -f /etc/redhat-release ]; then
-        # 安装依赖
-        yum install -y epel-release
-        yum install -y git gcc make automake libtool pkgconfig libev-devel pcre-devel openssl-devel m4
 
-        # 升级 autoconf 至 >=2.71
-        if [ -x "$(command -v autoconf)" ]; then
-            version=$(autoconf --version | head -n1 | awk '{print $4}')
-            major=$(echo $version | cut -d. -f1)
-            minor=$(echo $version | cut -d. -f2)
-            if [ "$major" -lt 2 ] || ([ "$major" -eq 2 ] && [ "$minor" -lt 71 ]); then
-                msg "CentOS autoconf <2.71，开始升级..."
-                cd /usr/local/src
-                curl -LO http://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz
-                tar xf autoconf-2.71.tar.gz
-                cd autoconf-2.71
-                ./configure --prefix=/usr/local
-                make && make install
-                export PATH=/usr/local/bin:$PATH
-            fi
-        fi
+    install_pkg git build-essential autoconf automake libtool pkg-config libev-dev libpcre3-dev libssl-dev dh-autoreconf
 
-        # 尝试安装仓库版本
-        if yum list available sniproxy >/dev/null 2>&1; then
-            yum install -y sniproxy
-        else
-            msg "CentOS 默认仓库没有 sniproxy，开始源码编译..."
-            cd /usr/local/src
-            git clone https://github.com/dlundquist/sniproxy.git
-            cd sniproxy
-            ./autogen.sh
-            ./configure --prefix=/usr
-            make && make install
-        fi
+    # 尝试仓库安装
+    if apt-cache policy sniproxy | grep -q 'Candidate:'; then
+        apt-get install -y sniproxy
     else
-        # Debian/Ubuntu
-        apt-get update
-        apt-get install -y git build-essential autoconf automake libtool pkg-config libev-dev libpcre3-dev libssl-dev dh-autoreconf
-
-        # 尝试仓库安装
-        if apt-cache policy sniproxy | grep -q 'Candidate:'; then
-            apt-get install -y sniproxy
-        else
-            msg "Ubuntu/Debian 仓库没有 sniproxy，开始源码编译..."
-            cd /usr/local/src
-            git clone https://github.com/dlundquist/sniproxy.git
-            cd sniproxy
-            ./autogen.sh
-            ./configure --prefix=/usr
-            make && make install
-        fi
+        msg "仓库没有 sniproxy，开始源码编译..."
+        cd /usr/local/src
+        git clone https://github.com/dlundquist/sniproxy.git
+        cd sniproxy
+        ./autogen.sh
+        ./configure --prefix=/usr
+        make && make install
     fi
 
     # systemd 服务文件
+    mkdir -p /etc/sniproxy
     cat >/etc/systemd/system/sniproxy.service <<EOF
 [Unit]
 Description=SNI Proxy
@@ -209,14 +165,12 @@ EOF
 install_A() {
     msg "开始安装 A 机器 (dnsmasq + HTTPS 透明代理)..."
 
-    # 安装基础包
     install_pkg dnsmasq
     install_pkg stunnel
     install_pkg iptables
-    install_pkg iproute
+    install_pkg iproute2
     install_pkg curl
 
-    # 安装 sniproxy
     install_sniproxy
 
     # dnsmasq 配置
@@ -233,7 +187,6 @@ EOF
     systemctl restart dnsmasq
 
     # sniproxy 配置
-    mkdir -p /etc/sniproxy
     cat > /etc/sniproxy/sniproxy.conf <<EOF
 user nobody
 pidfile /var/run/sniproxy.pid
@@ -258,7 +211,6 @@ accept = 443
 connect = 127.0.0.1:8443
 cert = /etc/stunnel/stunnel.pem
 EOF
-
     if [ ! -f /etc/stunnel/stunnel.pem ]; then
         openssl req -new -x509 -days 3650 -nodes -out /etc/stunnel/stunnel.pem -keyout /etc/stunnel/stunnel.pem -subj "/CN=A-Machine"
     fi
@@ -270,18 +222,11 @@ EOF
     iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 443
 
     # 保存 iptables
-    if [ -f /etc/redhat-release ]; then
-        install_pkg iptables-services
-        iptables-save > /etc/sysconfig/iptables
-        systemctl enable iptables
-        systemctl restart iptables
-    else
-        install_pkg iptables-persistent
-        netfilter-persistent save
-        netfilter-persistent reload
-    fi
+    install_pkg iptables-persistent
+    netfilter-persistent save
+    netfilter-persistent reload
 
-    msg "A 机器部署完成，HTTPS透明代理生效，iptables规则永久保存"
+    msg "A 机器部署完成，HTTPS透明代理生效"
 }
 
 # ================= B 机器安装 =================
@@ -360,7 +305,7 @@ EOF
 # ================= 主入口 =================
 while true; do
     echo "==========================================="
-    echo " DNS 解锁一键脚本 (A + B 通用)"
+    echo " DNS 解锁一键脚本 (Debian/Ubuntu)"
     echo "==========================================="
     echo " 1) 安装 A 机器 (dnsmasq + HTTPS 透明代理)"
     echo " 2) 安装 B 机器 (smartdns 分流客户端)"
