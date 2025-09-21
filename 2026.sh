@@ -542,7 +542,7 @@ configTrojan() {
     "password": [
         "$PASSWORD"
         ],
-	"log_level": 2,
+	"log_level": 0,
 	"log_file": "/etc/trojan-go/log.txt",
 	"disable_http_check": false,
 	"udp_timeout": 60,
@@ -564,7 +564,7 @@ configTrojan() {
     "plain_http_response": "",
     "fallback_addr": "",
     "fallback_port": 0,
-    "fingerprint": "firefox"
+    "fingerprint": "chrome"
   },
   "tcp": {
     "no_delay": true,
