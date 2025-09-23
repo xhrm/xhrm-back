@@ -55,11 +55,11 @@ init_config() {
 # Trojan-Go 日志路径
 LOG_FILE="/etc/trojan-go/log.txt"
 # 每个用户允许的最大IP数
-MAX_IPS=2
+MAX_IPS=3
 # 检查最近多少分钟的日志
 TIME_RANGE=5
 # 封禁时长(秒)
-BAN_TIME=600
+BAN_TIME=1800
 EOF
         echo ">>> 已生成默认配置文件: $CONF_FILE"
     fi
