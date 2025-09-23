@@ -542,7 +542,7 @@ configTrojan() {
     "password": [
         "$PASSWORD"
         ],
-	"log_level": 2,
+	"log_level": 0,
 	"log_file": "/etc/trojan-go/log.txt",
 	"disable_http_check": false,
 	"udp_timeout": 60,
