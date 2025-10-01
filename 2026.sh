@@ -291,6 +291,59 @@ getData() {
 
     colorEcho $BLUE " 允许搜索引擎：$ALLOW_SPIDER"
 }
+# ================= 定时重启功能（改为 /etc/cron.d 管理） =================
+DEFAULT_RESTART_TIME="00:10"
+SERVICE_NAME="trojan-go"
+LOG_FILE="/etc/trojan-go/log.txt"
+CRON_MARKER="auto_restart_$SERVICE_NAME"
+CRON_FILE="/etc/cron.d/trojan-go-autorestart"
+
+# 设置或更新定时重启任务（使用默认时间）
+setAutoRestart() {
+    RESTART_TIME="$DEFAULT_RESTART_TIME"
+    HOUR=${RESTART_TIME%:*}
+    MINUTE=${RESTART_TIME#*:}
+
+    # 确保 cron 服务启动
+    if systemctl list-unit-files | grep -qE '^crond\.service'; then
+        CRON_SERVICE="crond"
+    elif systemctl list-unit-files | grep -qE '^cron\.service'; then
+        CRON_SERVICE="cron"
+    else
+        echo "未找到 cron 服务，请确认已安装 cron。"
+        return 1
+    fi
+
+    if ! systemctl is-active --quiet "$CRON_SERVICE"; then
+        echo "正在启动 $CRON_SERVICE 服务..."
+        systemctl start "$CRON_SERVICE"
+        systemctl enable "$CRON_SERVICE" >/dev/null 2>&1 || true
+    fi
+
+    # 写入 /etc/cron.d 文件
+    echo "$MINUTE $HOUR * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
+    chmod 644 $CRON_FILE
+
+    echo "✅ 定时任务已设置：每天 $HOUR:$MINUTE 清理 $LOG_FILE 并自动重启 $SERVICE_NAME"
+}
+
+# 修改定时重启时间
+modifyAutoRestartTime() {
+    read -p "请输入新的定时重启时间 (格式 HH:MM，例如 00:10)：" NEW_TIME
+    if [[ ! $NEW_TIME =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+        echo "错误：时间格式无效，请使用 HH:MM"
+        return 1
+    fi
+
+    HOUR=${NEW_TIME%:*}
+    MINUTE=${NEW_TIME#*:}
+
+    echo "$MINUTE $HOUR * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
+    chmod 644 $CRON_FILE
+
+    echo "✅ 定时任务已更新为每天 $HOUR:$MINUTE 自动重启 $SERVICE_NAME"
+}
+# ================================================
 
 installNginx() {
     echo ""
@@ -742,6 +795,7 @@ install() {
 
 
     start
+    setAutoRestart
     showInfo
 
 }
@@ -918,6 +972,7 @@ menu() {
     echo -e "  ${GREEN}8.${PLAIN}  查看go配置"
     echo -e "  ${GREEN}9.${RED}    修改go配置${PLAIN}"
     echo -e "  ${GREEN}10.${PLAIN} 查看go日志"
+    echo -e "  ${GREEN}11.${PLAIN} 修改定时重启时间"
     echo " -------------"
     echo -e "  ${GREEN}0.${PLAIN} 退出"
     echo 
@@ -925,7 +980,7 @@ menu() {
     statusText
     echo 
 
-    read -p " 请选择操作[0-10]：" answer
+    read -p " 请选择操作[0-11]：" answer
     case $answer in
         0)
             exit 0
@@ -960,6 +1015,9 @@ menu() {
             ;;
         10)
             showLog
+            ;;
+        11)
+        modifyAutoRestartTime
             ;;
         *)
             echo -e "$RED 请选择正确的操作！${PLAIN}"
