@@ -146,7 +146,7 @@ archAffix() {
         ;;
     esac
 
-	return 0
+    return 0
 }
 
 getData() {
@@ -324,7 +324,7 @@ setAutoRestart() {
     echo "$MINUTE $HOUR * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
     chmod 644 $CRON_FILE
 
-    echo "✅ 定时任务已设置：每天 $HOUR:$MINUTE 清理 $LOG_FILE 并自动重启 $SERVICE_NAME"
+    echo "${GREEN}定时任务已设置：每天 $HOUR:$MINUTE 清理 $LOG_FILE 并自动重启 $SERVICE_NAME ${PLAIN}"
 }
 
 # 修改定时重启时间
@@ -341,7 +341,7 @@ modifyAutoRestartTime() {
     echo "$MINUTE $HOUR * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
     chmod 644 $CRON_FILE
 
-    echo "✅ 定时任务已更新为每天 $HOUR:$MINUTE 自动重启 $SERVICE_NAME"
+    echo "${GREEN}定时任务已更新为每天 $HOUR:$MINUTE 自动重启 $SERVICE_NAME  ${PLAIN}"
 }
 # ================================================
 
@@ -595,10 +595,10 @@ configTrojan() {
     "password": [
         "$PASSWORD"
         ],
-	"log_level": 0,
-	"log_file": "/etc/trojan-go/log.txt",
-	"disable_http_check": false,
-	"udp_timeout": 60,
+    "log_level": 0,
+    "log_file": "/etc/trojan-go/log.txt",
+    "disable_http_check": false,
+    "udp_timeout": 60,
   "ssl": {
     "verify": true,
     "verify_hostname": true,
@@ -963,14 +963,14 @@ menu() {
     echo -e "  ${GREEN}1.${PLAIN}  安装go"
     echo -e "  ${GREEN}2.${PLAIN}  安装go+WS"
     echo -e "  ${GREEN}3.${PLAIN}  更新go"
-    echo -e "  ${GREEN}4.${RED}    卸载go${PLAIN}"
+    echo -e "  ${GREEN}4.${RED}  卸载go${PLAIN}"
     echo " -------------"
     echo -e "  ${GREEN}5.${PLAIN}  启动go"
     echo -e "  ${GREEN}6.${PLAIN}  重启go"
     echo -e "  ${GREEN}7.${PLAIN}  停止go"
     echo " -------------"
     echo -e "  ${GREEN}8.${PLAIN}  查看go配置"
-    echo -e "  ${GREEN}9.${RED}    修改go配置${PLAIN}"
+    echo -e "  ${GREEN}9.${RED}  修改go配置${PLAIN}"
     echo -e "  ${GREEN}10.${PLAIN} 查看go日志"
     echo -e "  ${GREEN}11.${PLAIN} 修改定时重启时间"
     echo " -------------"
