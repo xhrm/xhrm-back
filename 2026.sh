@@ -324,7 +324,7 @@ setAutoRestart() {
     echo "$MINUTE $HOUR * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
     chmod 644 $CRON_FILE
 
-    echo -e "${BLUE}定时任务已设置：每天 $HOUR:$MINUTE 清理 $LOG_FILE 并自动重启 $SERVICE_NAME${PLAIN}"
+    echo -e " ${BLUE}定时任务已设置：每天 $HOUR:$MINUTE 清理 $LOG_FILE 并自动重启 $SERVICE_NAME${PLAIN}"
 
 }
 
@@ -342,7 +342,7 @@ modifyAutoRestartTime() {
     echo "$MINUTE $HOUR * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
     chmod 644 $CRON_FILE
 
-    echo -e "${BLUE}定时任务已更新为每天 $HOUR:$MINUTE 自动重启 $SERVICE_NAME${PLAIN}"
+    echo -e " ${BLUE}定时任务已更新为每天 $HOUR:$MINUTE 自动重启 $SERVICE_NAME${PLAIN}"
 }
 # ================================================
 
