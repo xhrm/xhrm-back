@@ -1,6 +1,6 @@
 #!/bin/bash
 # ================================================
-# Trojan-Go 多IP限制 + Fail2ban 管理脚本 (最终优化版)
+# Trojan-Go 多IP限制 + Fail2ban 管理脚本 (最终整合版)
 # 支持: CentOS 7 / Ubuntu / Debian
 # ================================================
 
@@ -55,7 +55,7 @@ init_config() {
     # 默认值
     LOG_FILE="/etc/trojan-go/log.txt"
     MAX_IPS=3
-    TIME_RANGE=5
+    TIME_RANGE=10
     BAN_TIME=1800
     BAN_MODE="extra"   # "extra"=封禁超出的IP, "all"=封禁所有IP
 
@@ -90,7 +90,6 @@ since=$(date -d "-$TIME_RANGE minutes" +%s)
 
 awk -v since="$since" '
 {
-    # 假设日志格式: 2025-10-05 17:22:33 [INFO] user xxx from 1.2.3.4:port
     ts=$1" "$2
     gsub(/[-:]/," ",ts)
     split(ts,t," ")
@@ -135,14 +134,12 @@ EOF
 setup_fail2ban() {
     mkdir -p /etc/fail2ban/filter.d/
 
-    # filter
     cat > /etc/fail2ban/filter.d/trojan-go.conf <<EOF
 [Definition]
 failregex = ^.*user .* from <HOST>:.*\$
 ignoreregex =
 EOF
 
-    # jail（只追加，不覆盖）
     if ! grep -q "\[trojan-go\]" /etc/fail2ban/jail.local 2>/dev/null; then
         cat >> /etc/fail2ban/jail.local <<EOF
 
@@ -160,7 +157,7 @@ EOF
     echo ">>> Fail2ban 配置完成并已启动"
 }
 
-# ================= 功能 =================
+# ================= 功能函数 =================
 start_service() {
     init_config
     install_fail2ban
@@ -239,6 +236,19 @@ change_ban_mode() {
     echo ">>> 模式已切换"
 }
 
+change_time_range() {
+    read -p "请输入新的检测时间范围(分钟): " new_range
+    if [[ ! "$new_range" =~ ^[0-9]+$ ]] || [ "$new_range" -lt 1 ]; then
+        echo "无效输入，必须是大于0的整数"
+        return
+    fi
+    sed -i "s/^TIME_RANGE=.*/TIME_RANGE=$new_range/" "$CONF_FILE"
+    echo ">>> 已修改 TIME_RANGE=$new_range 分钟"
+    source "$CONF_FILE"
+    "$CHECK_SCRIPT"
+    echo ">>> 设置已应用并立即生效"
+}
+
 # ================= 菜单 =================
 menu() {
     while true; do
@@ -256,6 +266,7 @@ menu() {
         echo "5. 修改最大允许IP数 (当前: $MAX_IPS)"
         echo "6. 修改封禁时长 (当前: $BAN_TIME 秒)"
         echo "7. 切换封禁模式 (当前: $BAN_MODE)"
+        echo "8. 修改日志检测时间范围 (当前: $TIME_RANGE 分钟)"
         echo "0. 退出"
         echo "================================"
         read -p "请输入选择: " num
@@ -267,6 +278,7 @@ menu() {
             5) change_max_ips ;;
             6) change_ban_time ;;
             7) change_ban_mode ;;
+            8) change_time_range ;;
             0) exit 0 ;;
             *) echo "无效选择"; sleep 2 ;;
         esac
