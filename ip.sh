@@ -1,6 +1,6 @@
 #!/bin/bash
 # ================================================
-# Trojan-Go 多IP限制 + Fail2ban 管理脚本 (优化版)
+# Trojan-Go 多IP限制 + Fail2ban 管理脚本 (最终优化版)
 # 支持: CentOS 7 / Ubuntu / Debian
 # ================================================
 
@@ -57,6 +57,7 @@ init_config() {
     MAX_IPS=3
     TIME_RANGE=5
     BAN_TIME=1800
+    BAN_MODE="extra"   # "extra"=封禁超出的IP, "all"=封禁所有IP
 
     if [ ! -f "$CONF_FILE" ]; then
         cat > "$CONF_FILE" <<EOF
@@ -68,6 +69,8 @@ MAX_IPS=$MAX_IPS
 TIME_RANGE=$TIME_RANGE
 # 封禁时长(秒)
 BAN_TIME=$BAN_TIME
+# 封禁模式: extra=只封禁超出的IP, all=封禁所有IP
+BAN_MODE="$BAN_MODE"
 EOF
         echo ">>> 已生成默认配置文件: $CONF_FILE"
     fi
@@ -105,12 +108,20 @@ while read -r user; do
     ips=$(grep "^$user " "$TMP_FILE" | awk '{print $2}' | sort -u)
     count=$(echo "$ips" | wc -l)
     if [ "$count" -gt "$MAX_IPS" ]; then
-        echo "[$(date '+%F %T')] 用户 $user 超出限制 (IP数=$count)" >> "/var/log/trojan-ban.log"
-        extra_ips=$(echo "$ips" | tail -n +$((MAX_IPS+1)))
-        for bad_ip in $extra_ips; do
-            echo "[$(date '+%F %T')] → 封禁 $bad_ip via Fail2ban (user=$user)" >> "/var/log/trojan-ban.log"
-            fail2ban-client set trojan-go banip "$bad_ip"
-        done
+        if [ "$BAN_MODE" = "all" ]; then
+            echo "[$(date '+%F %T')] 用户 $user 超出限制 (IP数=$count)，封禁其所有IP" >> "/var/log/trojan-ban.log"
+            for bad_ip in $ips; do
+                echo "[$(date '+%F %T')] → 封禁 $bad_ip via Fail2ban (user=$user)" >> "/var/log/trojan-ban.log"
+                fail2ban-client set trojan-go banip "$bad_ip"
+            done
+        else
+            echo "[$(date '+%F %T')] 用户 $user 超出限制 (IP数=$count)，封禁超出的IP" >> "/var/log/trojan-ban.log"
+            extra_ips=$(echo "$ips" | tail -n +$((MAX_IPS+1)))
+            for bad_ip in $extra_ips; do
+                echo "[$(date '+%F %T')] → 封禁 $bad_ip via Fail2ban (user=$user)" >> "/var/log/trojan-ban.log"
+                fail2ban-client set trojan-go banip "$bad_ip"
+            done
+        fi
     fi
 done < <(cut -d' ' -f1 "$TMP_FILE" | sort -u)
 
@@ -155,7 +166,6 @@ start_service() {
     install_fail2ban
     gen_check_script
     setup_fail2ban
-    # 加入定时任务（避免重复）
     (crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT"; echo "$CRON_JOB") | sort -u | crontab -
     echo ">>> 服务已启动（每5分钟检测一次）"
 }
@@ -208,10 +218,25 @@ change_ban_time() {
     sed -i "s/^BAN_TIME=.*/BAN_TIME=$new_ban/" "$CONF_FILE"
     echo ">>> 已修改 BAN_TIME=$new_ban"
     source "$CONF_FILE"
-    # 更新 fail2ban jail.local
     sed -i "s/^\(bantime\s*=\s*\).*/\1$BAN_TIME/" /etc/fail2ban/jail.local
     systemctl restart fail2ban
     echo ">>> 封禁时长已更新并立即生效"
+}
+
+change_ban_mode() {
+    echo "当前模式: $BAN_MODE"
+    echo "1. extra (只封禁超出的IP)"
+    echo "2. all   (封禁所有IP)"
+    read -p "请选择新的模式 [1/2]: " mode
+    case $mode in
+        1) new_mode="extra" ;;
+        2) new_mode="all" ;;
+        *) echo "无效选择"; return ;;
+    esac
+    sed -i "s/^BAN_MODE=.*/BAN_MODE=\"$new_mode\"/" "$CONF_FILE"
+    echo ">>> 已修改 BAN_MODE=$new_mode"
+    source "$CONF_FILE"
+    echo ">>> 模式已切换"
 }
 
 # ================= 菜单 =================
@@ -230,6 +255,7 @@ menu() {
         echo "4. 显示被封用户"
         echo "5. 修改最大允许IP数 (当前: $MAX_IPS)"
         echo "6. 修改封禁时长 (当前: $BAN_TIME 秒)"
+        echo "7. 切换封禁模式 (当前: $BAN_MODE)"
         echo "0. 退出"
         echo "================================"
         read -p "请输入选择: " num
@@ -240,6 +266,7 @@ menu() {
             4) show_banned ;;
             5) change_max_ips ;;
             6) change_ban_time ;;
+            7) change_ban_mode ;;
             0) exit 0 ;;
             *) echo "无效选择"; sleep 2 ;;
         esac
