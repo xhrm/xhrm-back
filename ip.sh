@@ -54,10 +54,10 @@ install_fail2ban() {
 init_config() {
     # 默认值
     LOG_FILE="/etc/trojan-go/log.txt"
-    MAX_IPS=3
+    MAX_IPS=2
     TIME_RANGE=10
     BAN_TIME=1800
-    BAN_MODE="extra"   # "extra"=封禁超出的IP, "all"=封禁所有IP
+    BAN_MODE="all"   # "extra"=封禁超出的IP, "all"=封禁所有IP
 
     if [ ! -f "$CONF_FILE" ]; then
         cat > "$CONF_FILE" <<EOF
