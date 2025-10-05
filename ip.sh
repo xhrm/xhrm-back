@@ -9,7 +9,6 @@ set -euo pipefail
 CONF_FILE="/etc/trojan-ban.conf"
 CHECK_SCRIPT="/usr/local/bin/check_trojan_users.sh"
 BAN_LOG="/var/log/trojan-ban.log"
-CRON_JOB="*/5 * * * * $CHECK_SCRIPT"
 
 # ================= 系统检测 =================
 detect_os() {
@@ -54,10 +53,11 @@ install_fail2ban() {
 init_config() {
     # 默认值
     LOG_FILE="/etc/trojan-go/log.txt"
-    MAX_IPS=2
-    TIME_RANGE=10
+    MAX_IPS=3
+    CHECK_INTERVAL=10   # 检测间隔，同时也是日志扫描时间范围
+    TIME_RANGE=$CHECK_INTERVAL
     BAN_TIME=1800
-    BAN_MODE="all"   # "extra"=封禁超出的IP, "all"=封禁所有IP
+    BAN_MODE="extra"   # "extra"=封禁超出的IP, "all"=封禁所有IP
 
     if [ ! -f "$CONF_FILE" ]; then
         cat > "$CONF_FILE" <<EOF
@@ -65,7 +65,8 @@ init_config() {
 LOG_FILE="$LOG_FILE"
 # 每个用户允许的最大IP数
 MAX_IPS=$MAX_IPS
-# 检查最近多少分钟的日志
+# 检测间隔（分钟）和日志扫描时间范围
+CHECK_INTERVAL=$CHECK_INTERVAL
 TIME_RANGE=$TIME_RANGE
 # 封禁时长(秒)
 BAN_TIME=$BAN_TIME
@@ -163,8 +164,9 @@ start_service() {
     install_fail2ban
     gen_check_script
     setup_fail2ban
+    CRON_JOB="*/$CHECK_INTERVAL * * * * $CHECK_SCRIPT"
     (crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT"; echo "$CRON_JOB") | sort -u | crontab -
-    echo ">>> 服务已启动（每5分钟检测一次）"
+    echo ">>> 服务已启动（每 $CHECK_INTERVAL 分钟检测一次）"
 }
 
 stop_service() {
@@ -236,17 +238,21 @@ change_ban_mode() {
     echo ">>> 模式已切换"
 }
 
-change_time_range() {
-    read -p "请输入新的检测时间范围(分钟): " new_range
-    if [[ ! "$new_range" =~ ^[0-9]+$ ]] || [ "$new_range" -lt 1 ]; then
+change_check_interval() {
+    read -p "请输入新的检测间隔(分钟，将同步更新日志扫描范围): " new_interval
+    if [[ ! "$new_interval" =~ ^[0-9]+$ ]] || [ "$new_interval" -lt 1 ]; then
         echo "无效输入，必须是大于0的整数"
         return
     fi
-    sed -i "s/^TIME_RANGE=.*/TIME_RANGE=$new_range/" "$CONF_FILE"
-    echo ">>> 已修改 TIME_RANGE=$new_range 分钟"
+    sed -i "s/^CHECK_INTERVAL=.*/CHECK_INTERVAL=$new_interval/" "$CONF_FILE"
+    sed -i "s/^TIME_RANGE=.*/TIME_RANGE=$new_interval/" "$CONF_FILE"
+    echo ">>> 已修改检测间隔和日志扫描范围为 $new_interval 分钟"
     source "$CONF_FILE"
-    "$CHECK_SCRIPT"
-    echo ">>> 设置已应用并立即生效"
+
+    # 更新 cron
+    CRON_JOB="*/$CHECK_INTERVAL * * * * $CHECK_SCRIPT"
+    (crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT"; echo "$CRON_JOB") | sort -u | crontab -
+    echo ">>> Cron 任务已更新并立即生效"
 }
 
 # ================= 菜单 =================
@@ -266,7 +272,7 @@ menu() {
         echo "5. 修改最大允许IP数 (当前: $MAX_IPS)"
         echo "6. 修改封禁时长 (当前: $BAN_TIME 秒)"
         echo "7. 切换封禁模式 (当前: $BAN_MODE)"
-        echo "8. 修改日志检测时间范围 (当前: $TIME_RANGE 分钟)"
+        echo "8. 修改检测间隔/日志扫描范围 (当前: $CHECK_INTERVAL 分钟)"
         echo "0. 退出"
         echo "================================"
         read -p "请输入选择: " num
@@ -278,7 +284,7 @@ menu() {
             5) change_max_ips ;;
             6) change_ban_time ;;
             7) change_ban_mode ;;
-            8) change_time_range ;;
+            8) change_check_interval ;;
             0) exit 0 ;;
             *) echo "无效选择"; sleep 2 ;;
         esac
