@@ -1,7 +1,6 @@
 #!/bin/bash
 # ============================================================
 # Trojan-Go 智能限速 + Fail2ban 封禁管理 + systemd自启动
-# 自动检测依赖、自动配置、自动自启
 # ============================================================
 
 set -euo pipefail
@@ -53,20 +52,17 @@ BAN_MODE="$BAN_MODE"
 EOF
 }
 
-# ------------------------------------------------------------
 check_dependencies() {
     echo "🔍 检查依赖..."
     for cmd in iptables fail2ban-client systemctl crontab awk grep; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
-            echo "⚠️ 缺少 $cmd，正在尝试安装..."
-            if command -v yum >/dev/null 2>&1; then
-                yum install -y iptables fail2ban cronie || true
-            elif command -v apt >/dev/null 2>&1; then
-                apt update -y && apt install -y iptables fail2ban cron || true
-            fi
+            echo "⚠️ 缺少 $cmd，请先安装"
+            echo "CentOS: yum install -y iptables fail2ban cronie"
+            echo "Debian/Ubuntu: apt install -y iptables fail2ban cron"
+            exit 1
         fi
     done
-    echo "✅ 依赖检测完毕"
+    echo "✅ 依赖正常"
 }
 
 detect_iface() {
@@ -191,7 +187,7 @@ disable_banning() {
 show_banned() {
     echo "=== 当前被封 IP ==="
     fail2ban-client status "$JAIL_NAME" 2>/dev/null | awk -F: '/Banned IP list/ {print $2}'
-    echo "-----------------------------------"
+    echo "-------------------"
     [ -f "$BAN_LOG" ] && tail -n 30 "$BAN_LOG" || echo "无封禁记录"
 }
 
@@ -204,7 +200,64 @@ unban_all() {
 }
 
 # ------------------------------------------------------------
-# systemd 自启动
+# 参数修改函数
+# ------------------------------------------------------------
+modify_limits() {
+    read -p "新上传限速(Mbps 当前 $LIMIT_UP_MBPS): " up
+    read -p "新下载限速(Mbps 当前 $LIMIT_DOWN_MBPS): " down
+    [ -n "$up" ] && LIMIT_UP_MBPS="$up"
+    [ -n "$down" ] && LIMIT_DOWN_MBPS="$down"
+    save_config
+    apply_limits
+}
+
+modify_max_ips() {
+    read -p "最大允许 IP 数(当前 $MAX_IPS): " n
+    MAX_IPS="$n"
+    save_config
+}
+
+modify_ban_time() {
+    read -p "封禁时长(秒 当前 $BAN_TIME): " n
+    BAN_TIME="$n"
+    save_config
+}
+
+modify_ban_mode() {
+    echo "1) extra (只封多余 IP)"
+    echo "2) all   (封所有 IP)"
+    read -p "选择模式(当前 $BAN_MODE): " m
+    [ "$m" == "1" ] && BAN_MODE="extra"
+    [ "$m" == "2" ] && BAN_MODE="all"
+    save_config
+}
+
+modify_check_interval() {
+    read -p "检测间隔(分钟 当前 $CHECK_INTERVAL): " n
+    CHECK_INTERVAL="$n"
+    save_config
+}
+
+# ------------------------------------------------------------
+# 状态显示
+# ------------------------------------------------------------
+show_status() {
+    echo "================= 当前状态 ================="
+    echo "端口: $PORT"
+    echo "限速: 上 $LIMIT_UP_MBPS Mbps / 下 $LIMIT_DOWN_MBPS Mbps"
+    echo "最大IP数: $MAX_IPS"
+    echo "封禁时长: $BAN_TIME 秒"
+    echo "封禁模式: $BAN_MODE"
+    echo "检测间隔: $CHECK_INTERVAL 分钟"
+    echo "配置文件: $CONF_FILE"
+    echo "-------------------------------------------"
+    echo "Fail2ban 状态："
+    fail2ban-client status "$JAIL_NAME" 2>/dev/null || echo "Fail2ban 未运行"
+    echo "==========================================="
+}
+
+# ------------------------------------------------------------
+# systemd 服务配置
 # ------------------------------------------------------------
 setup_systemd_service() {
     echo "⚙️ 创建 systemd 服务..."
@@ -222,38 +275,26 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+
     systemctl daemon-reload
     systemctl enable trojan-manager.service
     echo "✅ 已配置 systemd 自启服务"
 }
 
 # ------------------------------------------------------------
-# 状态查看
-# ------------------------------------------------------------
-show_status() {
-    echo "================= 当前状态 ================="
-    echo "端口: $PORT"
-    echo "限速: 上 $LIMIT_UP_MBPS Mbps / 下 $LIMIT_DOWN_MBPS Mbps"
-    echo "最大IP数: $MAX_IPS"
-    echo "封禁时长: $BAN_TIME 秒"
-    echo "封禁模式: $BAN_MODE"
-    echo "检测间隔: $CHECK_INTERVAL 分钟"
-    echo "配置文件: $CONF_FILE"
-    echo "-------------------------------------------"
-    echo "Fail2ban 状态:"
-    fail2ban-client status "$JAIL_NAME" 2>/dev/null || echo "Fail2ban 未运行"
-    echo "==========================================="
-}
-
-# ------------------------------------------------------------
-# 菜单交互
+# 菜单主程序
 # ------------------------------------------------------------
 main_menu() {
     init_config
     check_dependencies
     iface=$(detect_iface)
     echo "🌐 检测到主网卡: $iface"
-    setup_systemd_service
+
+    # 自动安装 systemd 服务
+    if [ ! -f "$SERVICE_FILE" ]; then
+        setup_systemd_service
+    fi
+
     while true; do
         clear
         echo "======== Trojan-Go 限速 + 封禁 + 自启管理 ========"
@@ -291,7 +332,7 @@ main_menu() {
 }
 
 # ------------------------------------------------------------
-# systemd 启动逻辑
+# 开机自启逻辑
 # ------------------------------------------------------------
 if [[ "${1:-}" == "--autostart" ]]; then
     init_config
