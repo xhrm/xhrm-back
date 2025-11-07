@@ -1,113 +1,143 @@
 #!/bin/bash
-# ============================================================
-# Trojan-Go 智能限速 + Fail2ban 封禁管理 + systemd自启动
-# 自动检测依赖、自动配置、自动自启
-# ============================================================
+# ================================================
+# Trojan-Go 多IP限制 + Fail2ban 管理脚本 (最终整合版)
+# 支持: CentOS 7 / Ubuntu / Debian
+# ================================================
 
 set -euo pipefail
 
-CONF_FILE="/etc/trojan_smart.conf"
-CHECK_SCRIPT="/usr/local/bin/trojan_smart_check.sh"
-SERVICE_FILE="/etc/systemd/system/trojan-manager.service"
-LOG_FILE="/etc/trojan-go/log.txt"
-BAN_LOG="/var/log/trojan-smart-ban.log"
-JAIL_NAME="trojan-go"
+CONF_FILE="/etc/trojan-ban.conf"
+CHECK_SCRIPT="/usr/local/bin/check_trojan_users.sh"
+BAN_LOG="/var/log/trojan-ban.log"
 
-PORT=443
-LIMIT_UP_MBPS=20
-LIMIT_DOWN_MBPS=20
-MAX_IPS=3
-CHECK_INTERVAL=10
-BAN_TIME=1800
-BAN_MODE="extra"
-
-# ------------------------------------------------------------
-init_config() {
-    if [ -f "$CONF_FILE" ]; then
-        source "$CONF_FILE"
-    else
-        cat > "$CONF_FILE" <<EOF
-PORT=$PORT
-LIMIT_UP_MBPS=$LIMIT_UP_MBPS
-LIMIT_DOWN_MBPS=$LIMIT_DOWN_MBPS
-LOG_FILE="$LOG_FILE"
-MAX_IPS=$MAX_IPS
-CHECK_INTERVAL=$CHECK_INTERVAL
-BAN_TIME=$BAN_TIME
-BAN_MODE="$BAN_MODE"
-EOF
-        source "$CONF_FILE"
-    fi
-}
-
-save_config() {
-    cat > "$CONF_FILE" <<EOF
-PORT=$PORT
-LIMIT_UP_MBPS=$LIMIT_UP_MBPS
-LIMIT_DOWN_MBPS=$LIMIT_DOWN_MBPS
-LOG_FILE="$LOG_FILE"
-MAX_IPS=$MAX_IPS
-CHECK_INTERVAL=$CHECK_INTERVAL
-BAN_TIME=$BAN_TIME
-BAN_MODE="$BAN_MODE"
-EOF
-}
-
-# ------------------------------------------------------------
-check_dependencies() {
-    echo "🔍 检查依赖..."
-    for cmd in iptables fail2ban-client systemctl crontab awk grep; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            echo "⚠️ 缺少 $cmd，正在尝试安装..."
-            if command -v yum >/dev/null 2>&1; then
-                yum install -y iptables fail2ban cronie || true
-            elif command -v apt >/dev/null 2>&1; then
-                apt update -y && apt install -y iptables fail2ban cron || true
-            fi
+# ================= 系统检测 =================
+detect_os() {
+    if [ -f /etc/redhat-release ]; then
+        OS_TYPE="centos"
+        OS_VER=$(rpm -E %{rhel})
+        if [ "$OS_VER" != "7" ]; then
+            echo ">>> 仅支持 CentOS 7"
+            exit 1
         fi
-    done
-    echo "✅ 依赖检测完毕"
+    elif [ -f /etc/debian_version ]; then
+        OS_TYPE="debian"
+        OS_VER=$(lsb_release -sr 2>/dev/null || cat /etc/debian_version)
+    else
+        echo "不支持的系统"
+        exit 1
+    fi
+    echo ">>> 检测到系统: $OS_TYPE $OS_VER"
 }
 
-detect_iface() {
-    ip route | awk '/default/ {print $5; exit}'
+# ================= 安装 Fail2ban =================
+install_fail2ban() {
+    if command -v fail2ban-client &>/dev/null; then
+        echo ">>> Fail2ban 已安装"
+        return
+    fi
+
+    echo ">>> 安装 Fail2ban ..."
+    if [ "$OS_TYPE" == "centos" ]; then
+        yum install -y epel-release
+        yum install -y fail2ban
+    else
+        apt update
+        apt install -y fail2ban
+    fi
+
+    systemctl enable fail2ban
+    systemctl restart fail2ban
 }
 
-# ------------------------------------------------------------
-# 限速模块
-# ------------------------------------------------------------
-apply_limits() {
-    echo "⚙️ 应用限速: 每 IP 上下行 ${LIMIT_UP_MBPS}/${LIMIT_DOWN_MBPS} Mbps"
-    clear_limits
-    iptables -I INPUT  -p tcp --dport "$PORT" -m hashlimit \
-        --hashlimit "${LIMIT_UP_MBPS}mb/s" --hashlimit-mode srcip --hashlimit-name trojan_up -j ACCEPT
-    iptables -I OUTPUT -p tcp --sport "$PORT" -m hashlimit \
-        --hashlimit "${LIMIT_DOWN_MBPS}mb/s" --hashlimit-mode srcip --hashlimit-name trojan_down -j ACCEPT
-    echo "✅ 限速规则生效"
+# ================= 初始化配置 =================
+init_config() {
+    # 默认值
+    LOG_FILE="/etc/trojan-go/log.txt"
+    MAX_IPS=3
+    CHECK_INTERVAL=10   # 检测间隔，同时也是日志扫描时间范围
+    TIME_RANGE=$CHECK_INTERVAL
+    BAN_TIME=1800
+    BAN_MODE="extra"   # "extra"=封禁超出的IP, "all"=封禁所有IP
+
+    if [ ! -f "$CONF_FILE" ]; then
+        cat > "$CONF_FILE" <<EOF
+# Trojan-Go 日志路径
+LOG_FILE="$LOG_FILE"
+# 每个用户允许的最大IP数
+MAX_IPS=$MAX_IPS
+# 检测间隔（分钟）和日志扫描时间范围
+CHECK_INTERVAL=$CHECK_INTERVAL
+TIME_RANGE=$TIME_RANGE
+# 封禁时长(秒)
+BAN_TIME=$BAN_TIME
+# 封禁模式: extra=只封禁超出的IP, all=封禁所有IP
+BAN_MODE="$BAN_MODE"
+EOF
+        echo ">>> 已生成默认配置文件: $CONF_FILE"
+    fi
+    # shellcheck disable=SC1090
+    source "$CONF_FILE"
 }
 
-clear_limits() {
-    echo "🧹 清理旧限速规则..."
-    for chain in INPUT OUTPUT; do
-        while iptables -S "$chain" 2>/dev/null | grep -q "hashlimit-name trojan_"; do
-            rule=$(iptables -S "$chain" | grep "hashlimit-name trojan_" | head -n1)
-            del_rule=$(echo "$rule" | sed 's/^-A /-D /')
-            iptables $del_rule || true
-        done
-    done
-    echo "✅ 清理完成"
+# ================= 生成检测脚本 =================
+gen_check_script() {
+    cat > "$CHECK_SCRIPT" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+source /etc/trojan-ban.conf
+TMP_FILE=$(mktemp /tmp/trojan_ips.XXXXXX)
+
+since=$(date -d "-$TIME_RANGE minutes" +%s)
+
+awk -v since="$since" '
+{
+    ts=$1" "$2
+    gsub(/[-:]/," ",ts)
+    split(ts,t," ")
+    logtime=mktime(t[1]" "t[2]" "t[3]" "t[4]" "t[5]" "t[6])
+    if (logtime >= since && /user .* from/) {
+        for (i=1;i<=NF;i++) {
+            if ($i=="user") user=$(i+1)
+            if ($i=="from") { split($(i+1),a,":"); ip=a[1] }
+        }
+        if (user!="" && ip!="") print user, ip
+    }
+}' "$LOG_FILE" | sort -u > "$TMP_FILE"
+
+while read -r user; do
+    ips=$(grep "^$user " "$TMP_FILE" | awk '{print $2}' | sort -u)
+    count=$(echo "$ips" | wc -l)
+    if [ "$count" -gt "$MAX_IPS" ]; then
+        if [ "$BAN_MODE" = "all" ]; then
+            echo "[$(date '+%F %T')] 用户 $user 超出限制 (IP数=$count)，封禁其所有IP" >> "/var/log/trojan-ban.log"
+            for bad_ip in $ips; do
+                echo "[$(date '+%F %T')] → 封禁 $bad_ip via Fail2ban (user=$user)" >> "/var/log/trojan-ban.log"
+                fail2ban-client set trojan-go banip "$bad_ip"
+            done
+        else
+            echo "[$(date '+%F %T')] 用户 $user 超出限制 (IP数=$count)，封禁超出的IP" >> "/var/log/trojan-ban.log"
+            extra_ips=$(echo "$ips" | tail -n +$((MAX_IPS+1)))
+            for bad_ip in $extra_ips; do
+                echo "[$(date '+%F %T')] → 封禁 $bad_ip via Fail2ban (user=$user)" >> "/var/log/trojan-ban.log"
+                fail2ban-client set trojan-go banip "$bad_ip"
+            done
+        fi
+    fi
+done < <(cut -d' ' -f1 "$TMP_FILE" | sort -u)
+
+rm -f "$TMP_FILE"
+EOF
+    chmod +x "$CHECK_SCRIPT"
+    echo ">>> 已生成检测脚本: $CHECK_SCRIPT"
 }
 
-# ------------------------------------------------------------
-# Fail2ban 模块
-# ------------------------------------------------------------
+# ================= Fail2ban 配置 =================
 setup_fail2ban() {
-    echo "⚙️ 配置 Fail2ban..."
-    mkdir -p /etc/fail2ban/filter.d
+    mkdir -p /etc/fail2ban/filter.d/
 
-    cat > /etc/fail2ban/filter.d/trojan-go.conf <<'EOF'
+    cat > /etc/fail2ban/filter.d/trojan-go.conf <<EOF
 [Definition]
-failregex = ^.*user .* from <HOST>:.*$
+failregex = ^.*user .* from <HOST>:.*\$
 ignoreregex =
 EOF
 
@@ -124,180 +154,146 @@ bantime  = $BAN_TIME
 EOF
     fi
 
-    systemctl enable fail2ban --now || true
-    systemctl restart fail2ban || true
-    echo "✅ Fail2ban 已配置"
+    systemctl restart fail2ban
+    echo ">>> Fail2ban 配置完成并已启动"
 }
 
-generate_check_script() {
-    cat > "$CHECK_SCRIPT" <<'EOF'
-#!/bin/bash
-set -euo pipefail
-CONF="/etc/trojan_smart.conf"
-source "$CONF"
-TMP=$(mktemp)
-since=$(date -d "-$CHECK_INTERVAL minutes" +%s)
-
-awk -v since="$since" '
-{
-  ts=$1" "$2
-  gsub(/[-:]/," ",ts)
-  split(ts,t," ")
-  logtime=mktime(t[1]" "t[2]" "t[3]" "t[4]" "t[5]" "t[6])
-  if (logtime>=since && /user .* from/) {
-    for (i=1;i<=NF;i++){
-      if ($i=="user") user=$(i+1)
-      if ($i=="from") {split($(i+1),a,":"); ip=a[1]}
-    }
-    if(user!="" && ip!="") print user,ip
-  }
-}' "$LOG_FILE" | sort -u > "$TMP"
-
-while read -r user; do
-  ips=$(grep "^$user " "$TMP" | awk '{print $2}' | sort -u)
-  count=$(echo "$ips" | wc -l)
-  if [ "$count" -gt "$MAX_IPS" ]; then
-    if [ "$BAN_MODE" = "all" ]; then
-      for ip in $ips; do
-        fail2ban-client set trojan-go banip "$ip" || true
-        echo "[$(date '+%F %T')] 封禁: $ip (user=$user, all)" >> "$BAN_LOG"
-      done
-    else
-      extra=$(echo "$ips" | tail -n +$((MAX_IPS+1)))
-      for ip in $extra; do
-        fail2ban-client set trojan-go banip "$ip" || true
-        echo "[$(date '+%F %T')] 封禁: $ip (user=$user, extra)" >> "$BAN_LOG"
-      done
-    fi
-  fi
-done < <(cut -d' ' -f1 "$TMP" | sort -u)
-rm -f "$TMP"
-EOF
-    chmod +x "$CHECK_SCRIPT"
-}
-
-enable_banning() {
+# ================= 功能函数 =================
+start_service() {
+    init_config
+    install_fail2ban
+    gen_check_script
     setup_fail2ban
-    generate_check_script
-    (crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT" || true; echo "*/$CHECK_INTERVAL * * * * $CHECK_SCRIPT") | crontab -
-    echo "✅ 封禁检测启用（每 $CHECK_INTERVAL 分钟）"
+    CRON_JOB="*/$CHECK_INTERVAL * * * * $CHECK_SCRIPT"
+    (crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT"; echo "$CRON_JOB") | sort -u | crontab -
+    echo ">>> 服务已启动（每 $CHECK_INTERVAL 分钟检测一次）"
 }
 
-disable_banning() {
-    (crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT" || true) | crontab -
-    echo "✅ 封禁检测关闭"
-}
-
-show_banned() {
-    echo "=== 当前被封 IP ==="
-    fail2ban-client status "$JAIL_NAME" 2>/dev/null | awk -F: '/Banned IP list/ {print $2}'
-    echo "-----------------------------------"
-    [ -f "$BAN_LOG" ] && tail -n 30 "$BAN_LOG" || echo "无封禁记录"
+stop_service() {
+    crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT" | crontab - || true
+    systemctl stop fail2ban || true
+    echo ">>> 服务已关闭"
 }
 
 unban_all() {
-    banned=$(fail2ban-client status "$JAIL_NAME" 2>/dev/null | awk -F: '/Banned IP list/ {print $2}')
-    for ip in $banned; do
-        fail2ban-client set "$JAIL_NAME" unbanip "$ip" || true
+    jails=$(fail2ban-client status | grep "Jail list" | cut -d: -f2)
+    for jail in $jails; do
+        banned=$(fail2ban-client status "$jail" | grep "Banned IP list:" | cut -d: -f2)
+        for ip in $banned; do
+            fail2ban-client set "$jail" unbanip "$ip"
+        done
     done
-    echo "✅ 已解封全部 IP"
+    echo ">>> 所有封禁已解除"
 }
 
-# ------------------------------------------------------------
-# systemd 自启动
-# ------------------------------------------------------------
-setup_systemd_service() {
-    echo "⚙️ 创建 systemd 服务..."
-    cat > "$SERVICE_FILE" <<EOF
-[Unit]
-Description=Trojan-Go 限速与封禁管理
-After=network-online.target fail2ban.service
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/trojan_manager.sh --autostart
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable trojan-manager.service
-    echo "✅ 已配置 systemd 自启服务"
+show_banned() {
+    if [ -f "$BAN_LOG" ]; then
+        echo "=== 被封用户记录 ==="
+        cat "$BAN_LOG"
+    else
+        echo "暂无封禁记录"
+    fi
 }
 
-# ------------------------------------------------------------
-# 状态查看
-# ------------------------------------------------------------
-show_status() {
-    echo "================= 当前状态 ================="
-    echo "端口: $PORT"
-    echo "限速: 上 $LIMIT_UP_MBPS Mbps / 下 $LIMIT_DOWN_MBPS Mbps"
-    echo "最大IP数: $MAX_IPS"
-    echo "封禁时长: $BAN_TIME 秒"
-    echo "封禁模式: $BAN_MODE"
-    echo "检测间隔: $CHECK_INTERVAL 分钟"
-    echo "配置文件: $CONF_FILE"
-    echo "-------------------------------------------"
-    echo "Fail2ban 状态:"
-    fail2ban-client status "$JAIL_NAME" 2>/dev/null || echo "Fail2ban 未运行"
-    echo "==========================================="
+change_max_ips() {
+    read -p "请输入新的最大IP数量: " new_ips
+    if [[ ! "$new_ips" =~ ^[0-9]+$ ]] || [ "$new_ips" -lt 1 ]; then
+        echo "无效的数字"
+        return
+    fi
+    sed -i "s/^MAX_IPS=.*/MAX_IPS=$new_ips/" "$CONF_FILE"
+    echo ">>> 已修改 MAX_IPS=$new_ips"
+    source "$CONF_FILE"
+    "$CHECK_SCRIPT"
+    echo ">>> 设置已应用并立即生效"
 }
 
-# ------------------------------------------------------------
-# 菜单交互
-# ------------------------------------------------------------
-main_menu() {
-    init_config
-    check_dependencies
-    iface=$(detect_iface)
-    echo "🌐 检测到主网卡: $iface"
-    setup_systemd_service
+change_ban_time() {
+    read -p "请输入新的封禁时长(秒): " new_ban
+    if [[ ! "$new_ban" =~ ^[0-9]+$ ]] || [ "$new_ban" -lt 60 ]; then
+        echo "无效的封禁时长（必须 ≥60 秒）"
+        return
+    fi
+    sed -i "s/^BAN_TIME=.*/BAN_TIME=$new_ban/" "$CONF_FILE"
+    echo ">>> 已修改 BAN_TIME=$new_ban"
+    source "$CONF_FILE"
+    sed -i "s/^\(bantime\s*=\s*\).*/\1$BAN_TIME/" /etc/fail2ban/jail.local
+    systemctl restart fail2ban
+    echo ">>> 封禁时长已更新并立即生效"
+}
+
+change_ban_mode() {
+    echo "当前模式: $BAN_MODE"
+    echo "1. extra (只封禁超出的IP)"
+    echo "2. all   (封禁所有IP)"
+    read -p "请选择新的模式 [1/2]: " mode
+    case $mode in
+        1) new_mode="extra" ;;
+        2) new_mode="all" ;;
+        *) echo "无效选择"; return ;;
+    esac
+    sed -i "s/^BAN_MODE=.*/BAN_MODE=\"$new_mode\"/" "$CONF_FILE"
+    echo ">>> 已修改 BAN_MODE=$new_mode"
+    source "$CONF_FILE"
+    echo ">>> 模式已切换"
+}
+
+change_check_interval() {
+    read -p "请输入新的检测间隔(分钟，将同步更新日志扫描范围): " new_interval
+    if [[ ! "$new_interval" =~ ^[0-9]+$ ]] || [ "$new_interval" -lt 1 ]; then
+        echo "无效输入，必须是大于0的整数"
+        return
+    fi
+    sed -i "s/^CHECK_INTERVAL=.*/CHECK_INTERVAL=$new_interval/" "$CONF_FILE"
+    sed -i "s/^TIME_RANGE=.*/TIME_RANGE=$new_interval/" "$CONF_FILE"
+    echo ">>> 已修改检测间隔和日志扫描范围为 $new_interval 分钟"
+    source "$CONF_FILE"
+
+    # 更新 cron
+    CRON_JOB="*/$CHECK_INTERVAL * * * * $CHECK_SCRIPT"
+    (crontab -l 2>/dev/null | grep -v "$CHECK_SCRIPT"; echo "$CRON_JOB") | sort -u | crontab -
+    echo ">>> Cron 任务已更新并立即生效"
+}
+
+# ================= 菜单 =================
+menu() {
     while true; do
         clear
-        echo "======== Trojan-Go 限速 + 封禁 + 自启管理 ========"
-        echo "1) 开启限速"
-        echo "2) 关闭限速"
-        echo "3) 修改限速"
-        echo "4) 开启封禁"
-        echo "5) 关闭封禁"
-        echo "6) 解锁所有封禁"
-        echo "7) 查看被封用户"
-        echo "8) 修改最大允许IP数"
-        echo "9) 修改封禁时长"
-        echo "10) 切换封禁模式"
-        echo "11) 修改检测间隔"
-        echo "12) 查看当前状态"
-        echo "0) 退出"
-        read -p "选择操作: " opt
-        case "$opt" in
-            1) apply_limits; read -p "回车继续..." ;;
-            2) clear_limits; read -p "回车继续..." ;;
-            3) modify_limits; read -p "回车继续..." ;;
-            4) enable_banning; read -p "回车继续..." ;;
-            5) disable_banning; read -p "回车继续..." ;;
-            6) unban_all; read -p "回车继续..." ;;
-            7) show_banned; read -p "回车继续..." ;;
-            8) modify_max_ips; read -p "回车继续..." ;;
-            9) modify_ban_time; read -p "回车继续..." ;;
-            10) modify_ban_mode; read -p "回车继续..." ;;
-            11) modify_check_interval; read -p "回车继续..." ;;
-            12) show_status; read -p "回车继续..." ;;
+        echo "================================"
+        echo " Trojan-Go 多IP限制 管理脚本"
+        echo " 配置文件: $CONF_FILE"
+        echo " 检测脚本: $CHECK_SCRIPT"
+        echo " 封禁日志: $BAN_LOG"
+        echo "================================"
+        echo "1. 开启服务"
+        echo "2. 关闭服务"
+        echo "3. 解锁所有封禁"
+        echo "4. 显示被封用户"
+        echo "5. 修改最大允许IP数 (当前: $MAX_IPS)"
+        echo "6. 修改封禁时长 (当前: $BAN_TIME 秒)"
+        echo "7. 切换封禁模式 (当前: $BAN_MODE)"
+        echo "8. 修改检测间隔/日志扫描范围 (当前: $CHECK_INTERVAL 分钟)"
+        echo "0. 退出"
+        echo "================================"
+        read -p "请输入选择: " num
+        case $num in
+            1) start_service ;;
+            2) stop_service ;;
+            3) unban_all ;;
+            4) show_banned ;;
+            5) change_max_ips ;;
+            6) change_ban_time ;;
+            7) change_ban_mode ;;
+            8) change_check_interval ;;
             0) exit 0 ;;
-            *) echo "无效选项" ;;
+            *) echo "无效选择"; sleep 2 ;;
         esac
+        read -p "按回车返回菜单..."
+        source "$CONF_FILE"
     done
 }
 
-# ------------------------------------------------------------
-# systemd 启动逻辑
-# ------------------------------------------------------------
-if [[ "${1:-}" == "--autostart" ]]; then
-    init_config
-    apply_limits
-    enable_banning
-    exit 0
-fi
-
-main_menu
+# ================= 主程序 =================
+detect_os
+init_config
+menu
