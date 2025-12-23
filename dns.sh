@@ -1,116 +1,92 @@
 #!/bin/bash
-# CentOS 7/8 DNS 管理工具（稳定修复版）
 
-BACKUP_FILE="/tmp/nm_dns_backup.txt"
-RESOLV_BACKUP="/tmp/resolv_backup.conf"
+# root 检查
+[ "$EUID" -ne 0 ] && echo "请使用 root 运行" && exit 1
 
-set -e
+# 环境检测
+if systemctl is-active --quiet NetworkManager; then
+  MODE="NM"
+elif systemctl is-active --quiet network; then
+  MODE="NETWORK"
+else
+  MODE="MANUAL"
+fi
 
-detect_package_manager() {
-    if command -v yum &>/dev/null; then
-        PM="yum"
-    elif command -v dnf &>/dev/null; then
-        PM="dnf"
-    else
-        PM=""
-    fi
+# 显示 DNS
+show_dns() {
+  echo "当前 DNS："
+  grep "^nameserver" /etc/resolv.conf || echo "未配置"
+  echo
 }
 
-install_nmcli() {
-    if command -v nmcli &>/dev/null; then
-        HAS_NMCLI=1
-        return
-    fi
+# NetworkManager 模式
+set_dns_nm() {
+  read -p "请输入 DNS（空格分隔）: " DNS
+  CONN=$(nmcli -t -f NAME,DEVICE con show --active | grep -v ":$" | head -n1 | cut -d: -f1)
 
-    detect_package_manager
-    if [ -z "$PM" ]; then
-        HAS_NMCLI=0
-        return
-    fi
+  [ -z "$CONN" ] && echo "未检测到有效连接" && return
 
-    sudo $PM install -y NetworkManager
-    systemctl enable --now NetworkManager
-    HAS_NMCLI=1
+  nmcli con mod "$CONN" ipv4.ignore-auto-dns yes
+  nmcli con mod "$CONN" ipv4.dns "$DNS"
+  nmcli con up "$CONN" >/dev/null
+
+  echo "DNS 修改完成（NetworkManager）"
 }
 
-get_all_connections() {
-    nmcli -t -f NAME con show
+# network 服务模式
+set_dns_network() {
+  read -p "请输入 DNS（空格分隔）: " DNS
+  IFACE=$(ls /etc/sysconfig/network-scripts/ifcfg-* 2>/dev/null | grep -v lo | head -n1)
+
+  [ -z "$IFACE" ] && echo "未找到网卡配置文件" && return
+
+  sed -i '/^DNS[0-9]=/d' "$IFACE"
+
+  i=1
+  for d in $DNS; do
+    echo "DNS$i=$d" >> "$IFACE"
+    i=$((i+1))
+  done
+
+  systemctl restart network
+  echo "DNS 修改完成（network 服务）"
 }
 
-backup_dns() {
-    if [ "$HAS_NMCLI" -eq 1 ]; then
-        : > "$BACKUP_FILE"
-        mapfile -t connections < <(get_all_connections)
-        for con in "${connections[@]}"; do
-            dns=$(nmcli -g ipv4.dns con show "$con")
-            echo "$con|$dns" >> "$BACKUP_FILE"
-        done
-        echo "✅ DNS 已备份到 $BACKUP_FILE"
-    else
-        cp /etc/resolv.conf "$RESOLV_BACKUP"
-        echo "✅ /etc/resolv.conf 已备份"
-    fi
+# 手动强制模式
+set_dns_manual() {
+  read -p "请输入 DNS（空格分隔）: " DNS
+
+  chattr -i /etc/resolv.conf 2>/dev/null
+  > /etc/resolv.conf
+
+  for d in $DNS; do
+    echo "nameserver $d" >> /etc/resolv.conf
+  done
+
+  chattr +i /etc/resolv.conf
+  echo "DNS 已强制写入并锁定"
 }
 
-set_dns() {
-    read -rp "请输入 DNS（空格分隔）： " dns_input
-    [ -z "$dns_input" ] && echo "❌ DNS 不能为空" && exit 1
-
-    backup_dns
-
-    if [ "$HAS_NMCLI" -eq 1 ]; then
-        mapfile -t connections < <(get_all_connections)
-        for con in "${connections[@]}"; do
-            nmcli con mod "$con" ipv4.ignore-auto-dns yes
-            nmcli con mod "$con" ipv4.dns "$dns_input"
-        done
-        echo "✅ DNS 设置完成（重连后生效）"
-    else
-        cp /etc/resolv.conf "$RESOLV_BACKUP"
-        > /etc/resolv.conf
-        for dns in $dns_input; do
-            echo "nameserver $dns" >> /etc/resolv.conf
-        done
-        echo "✅ resolv.conf 已修改"
-    fi
-}
-
-restore_dns() {
-    if [ "$HAS_NMCLI" -eq 1 ]; then
-        [ ! -f "$BACKUP_FILE" ] && echo "❌ 未找到备份" && exit 1
-
-        while IFS="|" read -r con dns; do
-            if [ -z "$dns" ]; then
-                nmcli con mod "$con" ipv4.ignore-auto-dns no
-                nmcli con mod "$con" ipv4.dns ""
-            else
-                nmcli con mod "$con" ipv4.ignore-auto-dns yes
-                nmcli con mod "$con" ipv4.dns "$dns"
-            fi
-        done < "$BACKUP_FILE"
-
-        echo "✅ DNS 已准确还原（按连接名）"
-    else
-        [ ! -f "$RESOLV_BACKUP" ] && echo "❌ 无备份" && exit 1
-        cp "$RESOLV_BACKUP" /etc/resolv.conf
-        echo "✅ resolv.conf 已还原"
-    fi
-}
-
-install_nmcli
-
+# 菜单
 while true; do
-    echo "====== DNS 管理工具（修复稳定版）======"
-    echo "1. 修改 DNS"
-    echo "2. 还原 DNS"
-    echo "0. 退出"
-    read -rp "选择: " choice
+  echo "=============================="
+  echo "当前模式：$MODE"
+  echo "1) 修改 DNS"
+  echo "2) 显示当前 DNS"
+  echo "3) 退出"
+  echo "=============================="
+  read -p "请选择: " CHOICE
 
-    case "$choice" in
-        1) set_dns ;;
-        2) restore_dns ;;
-        0) exit 0 ;;
-        *) echo "❌ 无效选项" ;;
-    esac
-    echo
+  case "$CHOICE" in
+    1)
+      case "$MODE" in
+        NM) set_dns_nm ;;
+        NETWORK) set_dns_network ;;
+        MANUAL) set_dns_manual ;;
+      esac
+      ;;
+    2) show_dns ;;
+    3) exit 0 ;;
+    *) echo "无效选项" ;;
+  esac
 done
