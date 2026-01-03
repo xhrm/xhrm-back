@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# =================================================
-# 仅屏蔽 AI 服务（ChatGPT / Gemini）
-# hosts + ipset + nftables / iptables（真实可用才用）
-# =================================================
+# ==========================================
+# AI 服务自动屏蔽脚本
+# 默认执行：立即屏蔽 + 开机自动生效
+# 恢复：ai-block.sh restore
+# ==========================================
 
 BLOCKED_DOMAINS=(
     "chatgpt.com"
@@ -18,73 +19,125 @@ HOSTS_FILE="/etc/hosts"
 BACKUP_FILE="/etc/hosts.bak"
 IPSET_NAME="ai_block"
 
-# -------- root 校验 --------
-if [ "$EUID" -ne 0 ]; then
-    echo "必须使用 root 权限运行"
-    exit 1
-fi
+SELF_PATH="$(readlink -f "$0")"
+SERVICE_NAME="ai-block.service"
 
-# -------- hosts 备份 --------
-if [ ! -f "$BACKUP_FILE" ]; then
-    cp "$HOSTS_FILE" "$BACKUP_FILE"
-fi
+# ---------- root ----------
+[ "$EUID" -ne 0 ] && { echo "必须使用 root 权限运行"; exit 1; }
 
-# -------- hosts 层 --------
-for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
-    grep -q "$DOMAIN" "$HOSTS_FILE" || {
-        echo "127.0.0.1 $DOMAIN" >> "$HOSTS_FILE"
-        echo "127.0.0.1 www.$DOMAIN" >> "$HOSTS_FILE"
-    }
-done
+# ---------- hosts ----------
+backup_hosts() {
+    [ -f "$BACKUP_FILE" ] || cp "$HOSTS_FILE" "$BACKUP_FILE"
+}
 
-# -------- ipset --------
-IPSET_OK=0
-if command -v ipset &>/dev/null; then
+add_hosts() {
+    for d in "${BLOCKED_DOMAINS[@]}"; do
+        grep -q "$d" "$HOSTS_FILE" || {
+            echo "127.0.0.1 $d" >> "$HOSTS_FILE"
+            echo "127.0.0.1 www.$d" >> "$HOSTS_FILE"
+        }
+    done
+}
+
+restore_hosts() {
+    [ -f "$BACKUP_FILE" ] && cp "$BACKUP_FILE" "$HOSTS_FILE"
+}
+
+# ---------- ipset ----------
+setup_ipset() {
+    command -v ipset &>/dev/null || return 1
     ipset list "$IPSET_NAME" &>/dev/null || ipset create "$IPSET_NAME" hash:ip
-
-    for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
-        getent ahosts "$DOMAIN" | awk '{print $1}' | sort -u | while read -r ip; do
+    for d in "${BLOCKED_DOMAINS[@]}"; do
+        getent ahosts "$d" | awk '{print $1}' | sort -u | while read -r ip; do
             ipset add "$IPSET_NAME" "$ip" 2>/dev/null
         done
     done
-    IPSET_OK=1
+    return 0
+}
+
+cleanup_ipset() {
+    command -v ipset &>/dev/null && ipset destroy "$IPSET_NAME" 2>/dev/null
+}
+
+# ---------- firewall ----------
+setup_fw() {
+    if command -v nft &>/dev/null; then
+        nft list table inet filter &>/dev/null || nft add table inet filter
+        nft list chain inet filter output &>/dev/null || \
+            nft add chain inet filter output '{ type filter hook output priority 0; }'
+        nft list chain inet filter output | grep -q "@$IPSET_NAME" || \
+            nft add rule inet filter output ip daddr @"$IPSET_NAME" drop
+        return 0
+    fi
+
+    if command -v iptables &>/dev/null; then
+        iptables -C OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP 2>/dev/null || \
+            iptables -A OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP
+        return 0
+    fi
+    return 1
+}
+
+cleanup_fw() {
+    command -v nft &>/dev/null && nft flush chain inet filter output 2>/dev/null
+    command -v iptables &>/dev/null && \
+        iptables -D OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP 2>/dev/null
+}
+
+# ---------- autostart ----------
+enable_autostart() {
+    if command -v systemctl &>/dev/null; then
+        cat >/etc/systemd/system/$SERVICE_NAME <<EOF
+[Unit]
+Description=AI Block (ChatGPT / Gemini)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=$SELF_PATH
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+        systemctl enable $SERVICE_NAME
+        return
+    fi
+
+    # fallback cron
+    (crontab -l 2>/dev/null | grep -v "$SELF_PATH"; \
+     echo "@reboot $SELF_PATH") | crontab -
+}
+
+disable_autostart() {
+    if command -v systemctl &>/dev/null; then
+        systemctl disable $SERVICE_NAME 2>/dev/null
+        rm -f /etc/systemd/system/$SERVICE_NAME
+        systemctl daemon-reload
+    fi
+    crontab -l 2>/dev/null | grep -v "$SELF_PATH" | crontab - 2>/dev/null
+}
+
+# ---------- restore ----------
+if [ "$1" = "restore" ]; then
+    restore_hosts
+    cleanup_fw
+    cleanup_ipset
+    disable_autostart
+    echo "✔ 已恢复，并取消开机自动生效"
+    exit 0
 fi
 
-# -------- 防火墙层 --------
-FW_OK=0
+# ---------- default: block ----------
+backup_hosts
+add_hosts
 
-if [ "$IPSET_OK" -eq 1 ] && command -v nft &>/dev/null; then
-    nft list table inet filter &>/dev/null || nft add table inet filter
-    nft list chain inet filter output &>/dev/null || \
-        nft add chain inet filter output '{ type filter hook output priority 0; }'
-
-    nft list chain inet filter output | grep -q "@$IPSET_NAME" || \
-        nft add rule inet filter output ip daddr @"$IPSET_NAME" drop
-
-    FW_OK=1
-
-elif [ "$IPSET_OK" -eq 1 ] && command -v iptables &>/dev/null; then
-    iptables -C OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP 2>/dev/null || \
-        iptables -A OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP
-
-    FW_OK=1
-fi
-
-# -------- 最终状态输出 --------
-echo "======== 屏蔽状态 ========"
-
-echo "hosts     : 已生效"
-
-if [ "$IPSET_OK" -eq 1 ]; then
-    echo "ipset     : 已生效"
+if setup_ipset && setup_fw; then
+    echo "✔ AI 服务已屏蔽（含防火墙层）"
 else
-    echo "ipset     : 未启用"
+    echo "⚠ 仅 hosts 层生效"
 fi
 
-if [ "$FW_OK" -eq 1 ]; then
-    echo "防火墙层 : 已生效（内核级拦截）"
-else
-    echo "防火墙层 : 未启用（仅 hosts 层）"
-fi
-
-echo "=========================="
+enable_autostart
+echo "✔ 已设置开机 / 重启自动生效"
