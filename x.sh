@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# ==========================================
+# =================================================
 # 仅屏蔽 AI 服务（ChatGPT / Gemini）
+# 自动检测并安装依赖（ipset / nftables）
 # hosts + ipset + nftables
-# 不影响其它 Google / 网络服务
-# ==========================================
+# =================================================
 
 # -------- 精确 AI 域名列表 --------
 BLOCKED_DOMAINS=(
@@ -33,6 +33,53 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# -------- 发行版检测 --------
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+else
+    echo "无法识别系统发行版"
+    exit 1
+fi
+
+install_pkg() {
+    case "$ID" in
+        ubuntu|debian)
+            apt update
+            apt install -y "$@"
+            ;;
+        centos|rhel|rocky|almalinux|fedora)
+            dnf install -y "$@"
+            ;;
+        arch|manjaro)
+            pacman -Sy --noconfirm "$@"
+            ;;
+        opensuse*|suse)
+            zypper install -y "$@"
+            ;;
+        *)
+            echo "不支持的发行版：$ID"
+            exit 1
+            ;;
+    esac
+}
+
+# -------- 依赖检测与安装 --------
+if ! command -v ipset &>/dev/null; then
+    echo "安装依赖：ipset"
+    install_pkg ipset
+fi
+
+if ! command -v nft &>/dev/null; then
+    echo "安装依赖：nftables"
+    install_pkg nftables
+fi
+
+# -------- 启用 nftables 服务（如存在）--------
+if command -v systemctl &>/dev/null; then
+    systemctl enable nftables &>/dev/null || true
+    systemctl start nftables &>/dev/null || true
+fi
+
 # -------- 备份 hosts --------
 if [ ! -f "$BACKUP_FILE" ]; then
     cp "$HOSTS_FILE" "$BACKUP_FILE"
@@ -47,11 +94,6 @@ for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
 done
 
 # -------- ipset 初始化 --------
-if ! command -v ipset &>/dev/null; then
-    echo "未安装 ipset"
-    exit 1
-fi
-
 if ! ipset list "$IPSET_NAME" &>/dev/null; then
     ipset create "$IPSET_NAME" hash:ip
 fi
@@ -64,11 +106,6 @@ for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
 done
 
 # -------- nftables 初始化 --------
-if ! command -v nft &>/dev/null; then
-    echo "未安装 nftables"
-    exit 1
-fi
-
 if ! nft list table inet filter &>/dev/null; then
     nft add table inet filter
 fi
@@ -82,7 +119,7 @@ if ! nft list chain inet filter output | grep -q "@$IPSET_NAME"; then
     nft add rule inet filter output ip daddr @"$IPSET_NAME" drop
 fi
 
-# -------- DNS 缓存刷新（保持最小） --------
+# -------- DNS 缓存刷新（最小处理） --------
 if command -v systemctl &>/dev/null; then
     if systemctl is-active systemd-resolved &>/dev/null; then
         systemctl restart systemd-resolved
