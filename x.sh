@@ -2,30 +2,21 @@
 
 # =================================================
 # 仅屏蔽 AI 服务（ChatGPT / Gemini）
-# 自动检测并安装依赖（ipset / nftables）
-# hosts + ipset + nftables
+# hosts + ipset + nftables / iptables（真实可用才用）
 # =================================================
 
-# -------- 精确 AI 域名列表 --------
 BLOCKED_DOMAINS=(
-    # OpenAI / ChatGPT
     "chatgpt.com"
     "auth.openai.com"
     "api.openai.com"
     "platform.openai.com"
-
-    # Google Gemini
     "gemini.google.com"
     "generativelanguage.googleapis.com"
 )
 
-# -------- 文件与对象定义 --------
 HOSTS_FILE="/etc/hosts"
 BACKUP_FILE="/etc/hosts.bak"
-
 IPSET_NAME="ai_block"
-NFT_TABLE="inet filter"
-NFT_CHAIN="output"
 
 # -------- root 校验 --------
 if [ "$EUID" -ne 0 ]; then
@@ -33,99 +24,67 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# -------- 发行版检测 --------
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-else
-    echo "无法识别系统发行版"
-    exit 1
-fi
-
-install_pkg() {
-    case "$ID" in
-        ubuntu|debian)
-            apt update
-            apt install -y "$@"
-            ;;
-        centos|rhel|rocky|almalinux|fedora)
-            dnf install -y "$@"
-            ;;
-        arch|manjaro)
-            pacman -Sy --noconfirm "$@"
-            ;;
-        opensuse*|suse)
-            zypper install -y "$@"
-            ;;
-        *)
-            echo "不支持的发行版：$ID"
-            exit 1
-            ;;
-    esac
-}
-
-# -------- 依赖检测与安装 --------
-if ! command -v ipset &>/dev/null; then
-    echo "安装依赖：ipset"
-    install_pkg ipset
-fi
-
-if ! command -v nft &>/dev/null; then
-    echo "安装依赖：nftables"
-    install_pkg nftables
-fi
-
-# -------- 启用 nftables 服务（如存在）--------
-if command -v systemctl &>/dev/null; then
-    systemctl enable nftables &>/dev/null || true
-    systemctl start nftables &>/dev/null || true
-fi
-
-# -------- 备份 hosts --------
+# -------- hosts 备份 --------
 if [ ! -f "$BACKUP_FILE" ]; then
     cp "$HOSTS_FILE" "$BACKUP_FILE"
 fi
 
-# -------- hosts 层屏蔽 --------
+# -------- hosts 层 --------
 for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
-    if ! grep -q "$DOMAIN" "$HOSTS_FILE"; then
+    grep -q "$DOMAIN" "$HOSTS_FILE" || {
         echo "127.0.0.1 $DOMAIN" >> "$HOSTS_FILE"
         echo "127.0.0.1 www.$DOMAIN" >> "$HOSTS_FILE"
-    fi
+    }
 done
 
-# -------- ipset 初始化 --------
-if ! ipset list "$IPSET_NAME" &>/dev/null; then
-    ipset create "$IPSET_NAME" hash:ip
-fi
+# -------- ipset --------
+IPSET_OK=0
+if command -v ipset &>/dev/null; then
+    ipset list "$IPSET_NAME" &>/dev/null || ipset create "$IPSET_NAME" hash:ip
 
-# -------- 解析 AI 域名并加入 ipset --------
-for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
-    getent ahosts "$DOMAIN" | awk '{print $1}' | sort -u | while read -r ip; do
-        ipset add "$IPSET_NAME" "$ip" 2>/dev/null
+    for DOMAIN in "${BLOCKED_DOMAINS[@]}"; do
+        getent ahosts "$DOMAIN" | awk '{print $1}' | sort -u | while read -r ip; do
+            ipset add "$IPSET_NAME" "$ip" 2>/dev/null
+        done
     done
-done
-
-# -------- nftables 初始化 --------
-if ! nft list table inet filter &>/dev/null; then
-    nft add table inet filter
+    IPSET_OK=1
 fi
 
-if ! nft list chain inet filter output &>/dev/null; then
-    nft add chain inet filter output '{ type filter hook output priority 0; }'
+# -------- 防火墙层 --------
+FW_OK=0
+
+if [ "$IPSET_OK" -eq 1 ] && command -v nft &>/dev/null; then
+    nft list table inet filter &>/dev/null || nft add table inet filter
+    nft list chain inet filter output &>/dev/null || \
+        nft add chain inet filter output '{ type filter hook output priority 0; }'
+
+    nft list chain inet filter output | grep -q "@$IPSET_NAME" || \
+        nft add rule inet filter output ip daddr @"$IPSET_NAME" drop
+
+    FW_OK=1
+
+elif [ "$IPSET_OK" -eq 1 ] && command -v iptables &>/dev/null; then
+    iptables -C OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP 2>/dev/null || \
+        iptables -A OUTPUT -m set --match-set "$IPSET_NAME" dst -j DROP
+
+    FW_OK=1
 fi
 
-# -------- nftables 屏蔽规则 --------
-if ! nft list chain inet filter output | grep -q "@$IPSET_NAME"; then
-    nft add rule inet filter output ip daddr @"$IPSET_NAME" drop
+# -------- 最终状态输出 --------
+echo "======== 屏蔽状态 ========"
+
+echo "hosts     : 已生效"
+
+if [ "$IPSET_OK" -eq 1 ]; then
+    echo "ipset     : 已生效"
+else
+    echo "ipset     : 未启用"
 fi
 
-# -------- DNS 缓存刷新（最小处理） --------
-if command -v systemctl &>/dev/null; then
-    if systemctl is-active systemd-resolved &>/dev/null; then
-        systemctl restart systemd-resolved
-    elif systemctl is-active NetworkManager &>/dev/null; then
-        systemctl restart NetworkManager
-    fi
+if [ "$FW_OK" -eq 1 ]; then
+    echo "防火墙层 : 已生效（内核级拦截）"
+else
+    echo "防火墙层 : 未启用（仅 hosts 层）"
 fi
 
-echo "完成：仅 AI 服务（ChatGPT / Gemini）已被屏蔽"
+echo "=========================="
