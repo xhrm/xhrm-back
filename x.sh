@@ -5,10 +5,16 @@ TAG_BEGIN="# AI_BLOCK_BEGIN"
 TAG_END="# AI_BLOCK_END"
 
 BLOCK_DOMAINS=(
+# ===== ChatGPT Web =====
 "127.0.0.1 chatgpt.com"
 "127.0.0.1 www.chatgpt.com"
+"127.0.0.1 chat.openai.com"
+
+# ===== Gemini Web =====
 "127.0.0.1 gemini.google.com"
+"127.0.0.1 bard.google.com"
 )
+
 
 function enable_block() {
     if grep -q "$TAG_BEGIN" "$HOSTS_FILE"; then
