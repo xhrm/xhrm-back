@@ -1,4 +1,7 @@
 #!/bin/bash
+set -e  # 遇到错误立即退出
+
+# 颜色函数
 function blue(){
     echo -e "\033[34m\033[01m$1\033[0m"
 }
@@ -8,29 +11,196 @@ function green(){
 function red(){
     echo -e "\033[31m\033[01m$1\033[0m"
 }
+function yellow(){
+    echo -e "\033[33m\033[01m$1\033[0m"
+}
+
+# 版本比较函数
 function version_lt(){
     test "$(echo "$@" | tr " " "\n" | sort -rV | head -n 1)" != "$1"; 
 }
+
+# 错误处理函数
+function error_exit(){
+    red "错误: $1"
+    exit 1
+}
+
+# 检查命令是否成功执行
+function check_success(){
+    if [ $? -ne 0 ]; then
+        error_exit "$1"
+    fi
+}
+
+# 加载系统信息
 source /etc/os-release
 RELEASE=$ID
 VERSION=$VERSION_ID
+
+# 检测系统类型
 if [ "$RELEASE" == "centos" ]; then
     release="centos"
     systemPackage="yum"
-elif [ "$RELEASE" == "debian" ]; then
-    release="debian"
+    install_command="yum install -y"
+    remove_command="yum remove -y"
+elif [[ "$RELEASE" == "debian" || "$RELEASE" == "ubuntu" ]]; then
+    release="$RELEASE"
     systemPackage="apt-get"
-elif [ "$RELEASE" == "ubuntu" ]; then
-    release="ubuntu"
-    systemPackage="apt-get"
+    install_command="apt-get install -y"
+    remove_command="apt-get remove --purge -y"
+else
+    error_exit "不支持的系统类型: $RELEASE"
 fi
+
 systempwd="/etc/systemd/system/"
-function install_trojan(){
-    $systemPackage install -y nginx
-    if [ ! -d "/etc/nginx/" ]; then
-        red "nginx安装有问题，请使用卸载trojan后重新安装"
-        exit 1
+
+# 预检查函数
+function preinstall_check(){
+    yellow "开始预检查..."
+    
+    # 停止nginx如果正在运行
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        green "停止nginx服务..."
+        systemctl stop nginx
     fi
+    
+    # 安装必要工具
+    $install_command net-tools socat curl wget unzip zip tar >/dev/null 2>&1
+    check_success "安装必要工具失败"
+    
+    # 检查端口占用
+    Port80=`netstat -tlpn 2>/dev/null | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80 || true`
+    Port443=`netstat -tlpn 2>/dev/null | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 443 || true`
+    
+    if [ -n "$Port80" ]; then
+        process80=`netstat -tlpn 2>/dev/null | awk -F '[: ]+' '$5=="80"{print $9}'`
+        error_exit "80端口被占用，占用进程为：${process80}"
+    fi
+    
+    if [ -n "$Port443" ]; then
+        process443=`netstat -tlpn 2>/dev/null | awk -F '[: ]+' '$5=="443"{print $9}'`
+        error_exit "443端口被占用，占用进程为：${process443}"
+    fi
+    
+    # 处理SELinux
+    if [ -f "/etc/selinux/config" ]; then
+        CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
+        if [[ "$CHECK" == "SELINUX=enforcing" || "$CHECK" == "SELINUX=permissive" ]]; then
+            green "关闭SELinux..."
+            setenforce 0 2>/dev/null || true
+            sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
+        fi
+    fi
+    
+    # 防火墙配置
+    if [ "$release" == "centos" ]; then
+        # CentOS版本检查
+        if grep -q ' 6\.' /etc/redhat-release 2>/dev/null || grep -q ' 5\.' /etc/redhat-release 2>/dev/null; then
+            error_exit "CentOS 5/6不受支持"
+        fi
+        
+        # 配置firewalld
+        if systemctl is-active --quiet firewalld; then
+            green "配置firewalld规则..."
+            firewall-cmd --zone=public --add-port=80/tcp --permanent
+            firewall-cmd --zone=public --add-port=443/tcp --permanent
+            firewall-cmd --reload
+            check_success "firewalld配置失败"
+        fi
+        
+        # 添加nginx仓库
+        rpm -Uvh http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm --force --nodeps 2>/dev/null || true
+        
+    elif [ "$release" == "ubuntu" ]; then
+        # Ubuntu版本检查
+        if grep -q ' 14\.' /etc/os-release 2>/dev/null || grep -q ' 12\.' /etc/os-release 2>/dev/null; then
+            error_exit "Ubuntu 12/14不受支持"
+        fi
+        
+        # 配置ufw
+        if systemctl is-active --quiet ufw; then
+            green "配置ufw规则..."
+            ufw allow 80/tcp
+            ufw allow 443/tcp
+            ufw reload
+        fi
+        
+        apt-get update
+        
+    elif [ "$release" == "debian" ]; then
+        # 配置ufw
+        if systemctl is-active --quiet ufw; then
+            green "配置ufw规则..."
+            ufw allow 80/tcp
+            ufw allow 443/tcp
+            ufw reload
+        fi
+        
+        apt-get update
+    fi
+    
+    # 获取域名
+    green "======================="
+    blue "请输入绑定到云服务器的域名"
+    green "======================="
+    read your_domain
+    
+    # 验证域名解析
+    real_addr=`ping -c 1 ${your_domain} 2>/dev/null | sed '1{s/[^(]*(//;s/).*//;q}'`
+    if [ -z "$real_addr" ]; then
+        error_exit "域名解析失败，请检查域名是否正确"
+    fi
+    
+    local_addr=`curl -s --max-time 5 ipv4.icanhazip.com`
+    if [ -z "$local_addr" ]; then
+        local_addr=`curl -s --max-time 5 ifconfig.me`
+    fi
+    
+    if [ "$real_addr" == "$local_addr" ]; then
+        green "=========================================="
+        green "       域名解析正常，开始安装trojan"
+        green "=========================================="
+        sleep 1s
+        install_trojan "$your_domain"
+    else
+        red "===================================="
+        red "域名解析地址: $real_addr"
+        red "云服务器IP地址: $local_addr"
+        red "两者不一致"
+        red "===================================="
+        read -p "是否强制继续？[y/N] :" yn
+        if [[ $yn == [Yy] ]]; then
+            yellow "强制继续安装..."
+            install_trojan "$your_domain"
+        else
+            exit 1
+        fi
+    fi
+}
+
+# 安装trojan主函数
+function install_trojan(){
+    local your_domain="$1"
+    
+    if [ -z "$your_domain" ]; then
+        error_exit "域名未设置"
+    fi
+    
+    yellow "开始安装trojan，域名: $your_domain"
+    
+    # 安装nginx
+    green "安装nginx..."
+    $install_command nginx
+    check_success "nginx安装失败"
+    
+    # 验证nginx安装
+    if ! command -v nginx &> /dev/null; then
+        error_exit "nginx安装失败，请检查系统"
+    fi
+    
+    # 配置nginx
+    green "配置nginx..."
     cat > /etc/nginx/nginx.conf <<-EOF
 user  root;
 worker_processes  1;
@@ -47,10 +217,8 @@ http {
                       '"\$http_user_agent" "\$http_x_forwarded_for"';
     access_log  /var/log/nginx/access.log  main;
     sendfile        on;
-    #tcp_nopush     on;
     keepalive_timeout  120;
     client_max_body_size 20m;
-    #gzip  on;
     server {
         listen       80;
         server_name  $your_domain;
@@ -59,59 +227,81 @@ http {
     }
 }
 EOF
+    
     systemctl restart nginx
-    sleep 3
+    check_success "nginx启动失败"
+    systemctl enable nginx
+    
+    # 下载伪装页面
+    green "下载伪装页面..."
     rm -rf /usr/share/nginx/html/*
     cd /usr/share/nginx/html/
-    wget https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip >/dev/null 2>&1
-    unzip index.zip >/dev/null 2>&1
-    sleep 5
-    if [ ! -d "/usr/src" ]; then
-        mkdir /usr/src
+    
+    if ! wget -q --timeout=10 https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip; then
+        yellow "下载伪装页面失败，使用默认页面"
+        echo "<h1>Welcome to nginx!</h1>" > index.html
+    else
+        if ! unzip -q index.zip; then
+            yellow "解压失败，使用默认页面"
+            echo "<h1>Welcome to nginx!</h1>" > index.html
+        fi
+        rm -f index.zip
     fi
-    if [ ! -d "/usr/src/trojan-cert" ]; then
-        mkdir /usr/src/trojan-cert /usr/src/trojan-temp
-        mkdir /usr/src/trojan-cert/$your_domain
-        if [ ! -d "/usr/src/trojan-cert/$your_domain" ]; then
-            red "不存在/usr/src/trojan-cert/$your_domain目录"
-            exit 1
-        fi
-        curl https://get.acme.sh | sh
-        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
-        #~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-        ~/.acme.sh/acme.sh --issue -d $your_domain --nginx --keylength 2048
-        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
-            cert_success="1"
-        fi
-    elif [ -f "/usr/src/trojan-cert/$your_domain/fullchain.cer" ]; then
+    
+    sleep 3
+    
+    # 创建证书目录
+    mkdir -p /usr/src/trojan-cert/$your_domain /usr/src/trojan-temp
+    
+    # 申请SSL证书
+    green "申请SSL证书..."
+    
+    # 安装acme.sh
+    if [ ! -f ~/.acme.sh/acme.sh ]; then
+        curl -s https://get.acme.sh | sh
+        check_success "acme.sh安装失败"
+    fi
+    
+    # 生成随机邮箱
+    random_email=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 8 | head -n 1)@${your_domain}
+    
+    # 检查现有证书
+    cert_success="0"
+    
+    if [ -f "/usr/src/trojan-cert/$your_domain/fullchain.cer" ]; then
         cd /usr/src/trojan-cert/$your_domain
-        create_time=`stat -c %Y fullchain.cer`
+        create_time=`stat -c %Y fullchain.cer 2>/dev/null || stat -f %m fullchain.cer 2>/dev/null`
         now_time=`date +%s`
-        minus=$(($now_time - $create_time ))
-        if [  $minus -gt 5184000 ]; then
-            curl https://get.acme.sh | sh
-            ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl                                                                                        
-            #~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-            ~/.acme.sh/acme.sh --issue -d $your_domain --nginx --keylength 2048
-            if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
-                cert_success="1"
-            fi
-        else 
-            green "检测到域名$your_domain证书存在且未超过60天，无需重新申请"
-            cert_success="1"
-        fi        
-    else 
-    mkdir /usr/src/trojan-cert/$your_domain
-        curl https://get.acme.sh | sh
-        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl 
-        #~/.acme.sh/acme.sh  --issue  -d $your_domain  --nginx
-        ~/.acme.sh/acme.sh --issue -d $your_domain --nginx --keylength 2048
-        if test -s /root/.acme.sh/$your_domain/fullchain.cer; then
+        minus=$((now_time - create_time))
+        
+        if [ $minus -gt 5184000 ]; then
+            yellow "证书已超过60天，重新申请..."
+            ~/.acme.sh/acme.sh --register-account -m $random_email --server zerossl 2>/dev/null || true
+            ~/.acme.sh/acme.sh --issue -d $your_domain --nginx --keylength 2048 --force
+        else
+            green "证书未超过60天，无需重新申请"
             cert_success="1"
         fi
+    else
+        ~/.acme.sh/acme.sh --register-account -m $random_email --server zerossl 2>/dev/null || true
+        ~/.acme.sh/acme.sh --issue -d $your_domain --nginx --keylength 2048
+    fi
+    
+    # 检查证书是否申请成功
+    if [ -f "/root/.acme.sh/$your_domain/fullchain.cer" ]; then
+        cert_success="1"
+        
+        # 安装证书
+        ~/.acme.sh/acme.sh --installcert -d $your_domain \
+            --key-file /usr/src/trojan-cert/$your_domain/private.key \
+            --fullchain-file /usr/src/trojan-cert/$your_domain/fullchain.cer \
+            --reloadcmd "systemctl restart trojan" 2>/dev/null || true
     fi
     
     if [ "$cert_success" == "1" ]; then
+        green "证书申请成功"
+        
+        # 更新nginx配置
         cat > /etc/nginx/nginx.conf <<-EOF
 user  root;
 worker_processes  1;
@@ -128,10 +318,8 @@ http {
                       '"\$http_user_agent" "\$http_x_forwarded_for"';
     access_log  /var/log/nginx/access.log  main;
     sendfile        on;
-    #tcp_nopush     on;
     keepalive_timeout  120;
     client_max_body_size 20m;
-    #gzip  on;
     server {
         listen       127.0.0.1:80;
         server_name  $your_domain;
@@ -143,24 +331,45 @@ http {
         server_name  $your_domain;
         return 301 https://$your_domain\$request_uri;
     }
-    
 }
 EOF
+        
         systemctl restart nginx
-        systemctl enable nginx
+        check_success "nginx重启失败"
+        
+        # 下载trojan
         cd /usr/src
-        wget https://api.github.com/repos/trojan-gfw/trojan/releases/latest >/dev/null 2>&1
-        latest_version=`grep tag_name latest| awk -F '[:,"v]' '{print $6}'`
-        rm -f latest
-        green "开始下载最新版trojan amd64"
-        wget https://github.com/trojan-gfw/trojan/releases/download/v${latest_version}/trojan-${latest_version}-linux-amd64.tar.xz
-        tar xf trojan-${latest_version}-linux-amd64.tar.xz >/dev/null 2>&1
+        green "获取最新版trojan..."
+        
+        # 获取最新版本
+        LATEST_JSON=$(curl -s https://api.github.com/repos/trojan-gfw/trojan/releases/latest)
+        latest_version=$(echo $LATEST_JSON | grep -oP '"tag_name": "\K(.*?)(?=")')
+        latest_version=${latest_version#v}
+        
+        if [ -z "$latest_version" ]; then
+            yellow "获取最新版本失败，使用默认版本1.16.0"
+            latest_version="1.16.0"
+        fi
+        
+        green "下载trojan v${latest_version}..."
+        download_url="https://github.com/trojan-gfw/trojan/releases/download/v${latest_version}/trojan-${latest_version}-linux-amd64.tar.xz"
+        
+        if ! wget -q --timeout=30 "$download_url"; then
+            error_exit "trojan下载失败"
+        fi
+        
+        tar xf trojan-${latest_version}-linux-amd64.tar.xz
+        check_success "trojan解压失败"
         rm -f trojan-${latest_version}-linux-amd64.tar.xz
-        green "请设置trojan密码，建议不要出现特殊字符"
-        read -p "请输入密码 :" trojan_passwd
-        #trojan_passwd=$(cat /dev/urandom | head -1 | md5sum | head -c 8)
-         rm -rf /usr/src/trojan/server.conf
-         cat > /usr/src/trojan/server.conf <<-EOF
+        
+        # 生成随机密码
+        green "生成trojan密码..."
+        trojan_passwd=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9!@#$%^&*()_+' | fold -w 16 | head -n 1)
+        yellow "随机生成的密码: $trojan_passwd"
+        yellow "请妥善保存此密码！"
+        
+        # 配置trojan
+        cat > /usr/src/trojan/server.conf <<-EOF
 {
     "run_type": "server",
     "local_addr": "0.0.0.0",
@@ -212,296 +421,322 @@ EOF
     }
 }
 EOF
+        
+        # 清理临时文件
         rm -rf /usr/src/trojan-temp/
-        rm -f /usr/src/trojan-cli.zip
-        trojan_path=$(cat /dev/urandom | head -1 | md5sum | head -c 16)
-        #mkdir /usr/share/nginx/html/${trojan_path}
-        #mv /usr/src/trojan-cli/trojan-cli.zip /usr/share/nginx/html/${trojan_path}/    
+        
+        # 创建systemd服务
         cat > ${systempwd}trojan.service <<-EOF
-[Unit]  
-Description=trojan  
-After=network.target  
-   
-[Service]  
-Type=simple  
-PIDFile=/usr/src/trojan/trojan/trojan.pid
-ExecStart=/usr/src/trojan/trojan -c "/usr/src/trojan/server.conf"  
+[Unit]
+Description=trojan
+After=network.target
+
+[Service]
+Type=simple
+PIDFile=/usr/src/trojan/trojan.pid
+ExecStart=/usr/src/trojan/trojan -c "/usr/src/trojan/server.conf"
 ExecReload=/bin/kill -HUP \$MAINPID
 LimitNOFILE=infinity
 Restart=on-failure
 RestartSec=1s
-   
-[Install]  
+
+[Install]
 WantedBy=multi-user.target
 EOF
+        
         chmod +x ${systempwd}trojan.service
+        systemctl daemon-reload
         systemctl enable trojan.service
-        cd /root
-        ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
-            --key-file   /usr/src/trojan-cert/$your_domain/private.key \
-            --fullchain-file  /usr/src/trojan-cert/$your_domain/fullchain.cer \
-            --reloadcmd  "systemctl restart trojan" 
-        green "=========================================================================="
-        green "                         Trojan已安装完成"
-        green "=========================================================================="
+        systemctl start trojan.service
+        
+        check_success "trojan启动失败"
+        
+        # 输出安装信息
+        clear
+        green "=========================================================="
+        green " Trojan安装完成！"
+        green "=========================================================="
+        green " 域名: $your_domain"
+        green " 端口: 443"
+        green " 密码: $trojan_passwd"
+        green "=========================================================="
+        green " 配置文件: /usr/src/trojan/server.conf"
+        green " 证书目录: /usr/src/trojan-cert/$your_domain/"
+        green "=========================================================="
+        yellow " 请确保防火墙已开放443端口"
+        green "=========================================================="
+        
+        # 保存密码到文件
+        echo "域名: $your_domain" > /root/trojan_info.txt
+        echo "密码: $trojan_passwd" >> /root/trojan_info.txt
+        echo "端口: 443" >> /root/trojan_info.txt
+        echo "配置文件: /usr/src/trojan/server.conf" >> /root/trojan_info.txt
+        green "安装信息已保存到 /root/trojan_info.txt"
+        
     else
-        red "==================================="
-        red "https证书没有申请成功，本次安装失败"
-        red "==================================="
+        error_exit "证书申请失败，请检查域名解析和防火墙设置"
     fi
 }
-function preinstall_check(){
-    nginx_status=`ps -aux | grep "nginx: worker" |grep -v "grep"`
-    if [ -n "$nginx_status" ]; then
+
+# 修复证书函数
+function repair_cert(){
+    yellow "开始修复证书..."
+    
+    # 停止nginx
+    if systemctl is-active --quiet nginx; then
         systemctl stop nginx
     fi
-    $systemPackage -y install net-tools socat >/dev/null 2>&1
-    Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
-    Port443=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 443`
+    
+    # 检查端口占用
+    Port80=`netstat -tlpn 2>/dev/null | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80 || true`
     if [ -n "$Port80" ]; then
-        process80=`netstat -tlpn | awk -F '[: ]+' '$5=="80"{print $9}'`
-        red "==========================================================="
-        red "检测到80端口被占用，占用进程为：${process80}，本次安装结束"
-        red "==========================================================="
-        exit 1
+        process80=`netstat -tlpn 2>/dev/null | awk -F '[: ]+' '$5=="80"{print $9}'`
+        error_exit "80端口被占用，占用进程为：${process80}"
     fi
-    if [ -n "$Port443" ]; then
-        process443=`netstat -tlpn | awk -F '[: ]+' '$5=="443"{print $9}'`
-        red "============================================================="
-        red "检测到443端口被占用，占用进程为：${process443}，本次安装结束"
-        red "============================================================="
-        exit 1
-    fi
-    if [ -f "/etc/selinux/config" ]; then
-        CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
-        if [ "$CHECK" == "SELINUX=enforcing" ]; then
-            green "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
-            setenforce 0
-            sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
-            #loggreen "SELinux is not disabled, add port 80/443 to SELinux rules."
-            #loggreen "==== Install semanage"
-            #logcmd "yum install -y policycoreutils-python"
-            #semanage port -a -t http_port_t -p tcp 80
-            #semanage port -a -t http_port_t -p tcp 443
-            #semanage port -a -t http_port_t -p tcp 37212
-            #semanage port -a -t http_port_t -p tcp 37213
-        elif [ "$CHECK" == "SELINUX=permissive" ]; then
-            green "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
-            setenforce 0
-            sed -i 's/SELINUX=permissive/SELINUX=disabled/g' /etc/selinux/config
-        fi
-    fi
-    if [ "$release" == "centos" ]; then
-        if  [ -n "$(grep ' 6\.' /etc/redhat-release)" ] ;then
-        red "==============="
-        red "当前系统不受支持"
-        red "==============="
-        exit
-        fi
-        if  [ -n "$(grep ' 5\.' /etc/redhat-release)" ] ;then
-        red "==============="
-        red "当前系统不受支持"
-        red "==============="
-        exit
-        fi
-        firewall_status=`systemctl status firewalld | grep "Active: active"`
-        if [ -n "$firewall_status" ]; then
-            green "检测到firewalld开启状态，添加放行80/443端口规则"
-            firewall-cmd --zone=public --add-port=80/tcp --permanent
-            firewall-cmd --zone=public --add-port=443/tcp --permanent
-            firewall-cmd --reload
-        fi
-        rpm -Uvh http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm --force --nodeps
-    elif [ "$release" == "ubuntu" ]; then
-        if  [ -n "$(grep ' 14\.' /etc/os-release)" ] ;then
-        red "==============="
-        red "当前系统不受支持"
-        red "==============="
-        exit
-        fi
-        if  [ -n "$(grep ' 12\.' /etc/os-release)" ] ;then
-        red "==============="
-        red "当前系统不受支持"
-        red "==============="
-        exit
-        fi
-        ufw_status=`systemctl status ufw | grep "Active: active"`
-        if [ -n "$ufw_status" ]; then
-            ufw allow 80/tcp
-            ufw allow 443/tcp
-            ufw reload
-        fi
-        apt-get update
-    elif [ "$release" == "debian" ]; then
-        ufw_status=`systemctl status ufw | grep "Active: active"`
-        if [ -n "$ufw_status" ]; then
-            ufw allow 80/tcp
-            ufw allow 443/tcp
-            ufw reload
-        fi
-        apt-get update
-    fi
-    $systemPackage -y install  wget unzip zip curl tar >/dev/null 2>&1
-    green "======================="
+    
+    green "============================"
     blue "请输入绑定到云服务器的域名"
-    green "======================="
+    blue "务必与之前使用的域名一致"
+    green "============================"
     read your_domain
-    real_addr=`ping ${your_domain} -c 1 | sed '1{s/[^(]*(//;s/).*//;q}'`
-    local_addr=`curl ipv4.icanhazip.com`
-    if [ $real_addr == $local_addr ] ; then
-        green "=========================================="
-        green "       域名解析正常，开始安装trojan"
-        green "=========================================="
-        sleep 1s
-        install_trojan
-    else
-        red "===================================="
-        red "域名解析地址与云服务器IP地址不一致"
-        red "若你确认解析成功你可强制脚本继续运行"
-        red "===================================="
-        read -p "是否强制运行 ?请输入 [Y/n] :" yn
-        [ -z "${yn}" ] && yn="y"
-        if [[ $yn == [Yy] ]]; then
-            green "强制继续运行脚本"
-            sleep 1s
-            install_trojan
-        else
+    
+    if [ -z "$your_domain" ]; then
+        error_exit "域名不能为空"
+    fi
+    
+    # 验证域名解析
+    real_addr=`ping -c 1 ${your_domain} 2>/dev/null | sed '1{s/[^(]*(//;s/).*//;q}'`
+    if [ -z "$real_addr" ]; then
+        error_exit "域名解析失败"
+    fi
+    
+    local_addr=`curl -s --max-time 5 ipv4.icanhazip.com`
+    
+    if [ "$real_addr" != "$local_addr" ]; then
+        red "域名解析地址与服务器IP不一致"
+        read -p "是否强制继续？[y/N] :" yn
+        if [[ ! $yn == [Yy] ]]; then
             exit 1
         fi
     fi
-}
-function repair_cert(){
-    systemctl stop nginx
-    #iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-    #iptables -I INPUT -p tcp --dport 443 -j ACCEPT
-    Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
-    if [ -n "$Port80" ]; then
-        process80=`netstat -tlpn | awk -F '[: ]+' '$5=="80"{print $9}'`
-        red "==========================================================="
-        red "检测到80端口被占用，占用进程为：${process80}，本次安装结束"
-        red "==========================================================="
-        exit 1
+    
+    # 安装acme.sh
+    if [ ! -f ~/.acme.sh/acme.sh ]; then
+        curl -s https://get.acme.sh | sh
+        check_success "acme.sh安装失败"
     fi
-    green "============================"
-    blue "请输入绑定到云服务器的域名"
-    blue "务必与之前失败使用的域名一致"
-    green "============================"
-    read your_domain
-    real_addr=`ping ${your_domain} -c 1 | sed '1{s/[^(]*(//;s/).*//;q}'`
-    local_addr=`curl ipv4.icanhazip.com`
-    if [ $real_addr == $local_addr ] ; then
-        ~/.acme.sh/acme.sh  --register-account  -m test@$your_domain --server zerossl
-        ~/.acme.sh/acme.sh  --issue  -d $your_domain  --standalone
-        ~/.acme.sh/acme.sh  --installcert  -d  $your_domain   \
-            --key-file   /usr/src/trojan-cert/$your_domain/private.key \
+    
+    # 生成随机邮箱
+    random_email=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 8 | head -n 1)@${your_domain}
+    
+    # 创建证书目录
+    mkdir -p /usr/src/trojan-cert/$your_domain
+    
+    # 申请证书
+    ~/.acme.sh/acme.sh --register-account -m $random_email --server zerossl 2>/dev/null || true
+    ~/.acme.sh/acme.sh --issue -d $your_domain --standalone --keylength 2048 --force
+    
+    if [ -f "/root/.acme.sh/$your_domain/fullchain.cer" ]; then
+        ~/.acme.sh/acme.sh --installcert -d $your_domain \
+            --key-file /usr/src/trojan-cert/$your_domain/private.key \
             --fullchain-file /usr/src/trojan-cert/$your_domain/fullchain.cer \
-            --reloadcmd  "systemctl restart trojan"
-        if test -s /usr/src/trojan-cert/$your_domain/fullchain.cer; then
-            green "证书申请成功"
+            --reloadcmd "systemctl restart trojan"
+        
+        green "证书申请成功"
+        
+        # 重启服务
+        if systemctl is-active --quiet trojan; then
             systemctl restart trojan
+        fi
+        
+        if systemctl is-active --quiet nginx; then
             systemctl start nginx
-        else
-            red "申请证书失败"
         fi
     else
-        red "================================"
-        red "域名解析地址与云服务器IP地址不一致"
-        red "本次安装失败，请确保域名解析正常"
-        red "================================"
+        error_exit "证书申请失败"
     fi
 }
+
+# 卸载trojan函数
 function remove_trojan(){
-    red "================================"
-    red "即将卸载trojan"
-    red "同时卸载安装的nginx"
-    red "================================"
-    systemctl stop trojan
-    systemctl disable trojan
-    systemctl stop nginx
-    systemctl disable nginx
-    rm -f ${systempwd}trojan.service
-    if [ "$release" == "centos" ]; then
-        yum remove -y nginx
-    else
-        apt-get -y autoremove nginx
-        apt-get -y --purge remove nginx
-        apt-get -y autoremove && apt-get -y autoclean
-        find / | grep nginx | sudo xargs rm -rf
+    yellow "开始卸载trojan..."
+    
+    read -p "是否确认卸载trojan和nginx？[y/N] :" yn
+    if [[ ! $yn == [Yy] ]]; then
+        green "取消卸载"
+        return
     fi
+    
+    # 停止服务
+    systemctl stop trojan 2>/dev/null || true
+    systemctl disable trojan 2>/dev/null || true
+    systemctl stop nginx 2>/dev/null || true
+    systemctl disable nginx 2>/dev/null || true
+    
+    # 删除服务文件
+    rm -f ${systempwd}trojan.service
+    systemctl daemon-reload
+    
+    # 卸载nginx
+    if [ "$release" == "centos" ]; then
+        $remove_command nginx nginx-common 2>/dev/null || true
+        $remove_command nginx* 2>/dev/null || true
+    else
+        $remove_command nginx nginx-common nginx-full 2>/dev/null || true
+        apt-get autoremove -y 2>/dev/null || true
+        apt-get autoclean -y 2>/dev/null || true
+    fi
+    
+    # 删除相关目录
     rm -rf /usr/src/trojan/
-    rm -rf /usr/src/trojan-cli/
+    rm -rf /usr/src/trojan-cert/
     rm -rf /usr/share/nginx/html/*
     rm -rf /etc/nginx/
     rm -rf /root/.acme.sh/
-    green "=============="
-    green "trojan删除完毕"
-    green "=============="
+    rm -f /root/trojan_info.txt
+    
+    green "=================================="
+    green " trojan和nginx已卸载完成"
+    green "=================================="
 }
+
+# 更新trojan函数
 function update_trojan(){
-    /usr/src/trojan/trojan -v 2>trojan.tmp
-    curr_version=`cat trojan.tmp | grep "trojan" | awk '{print $4}'`
-    wget https://api.github.com/repos/trojan-gfw/trojan/releases/latest >/dev/null 2>&1
-    latest_version=`grep tag_name latest| awk -F '[:,"v]' '{print $6}'`
-    rm -f latest
-    rm -f trojan.tmp
-    if version_lt "$curr_version" "$latest_version"; then
-        green "当前版本$curr_version,最新版本$latest_version,开始升级……"
-        mkdir trojan_update_temp && cd trojan_update_temp
-        wget https://github.com/trojan-gfw/trojan/releases/download/v${latest_version}/trojan-${latest_version}-linux-amd64.tar.xz >/dev/null 2>&1
-        tar xf trojan-${latest_version}-linux-amd64.tar.xz >/dev/null 2>&1
-        mv ./trojan/trojan /usr/src/trojan/
-        cd .. && rm -rf trojan_update_temp
-        systemctl restart trojan
-    /usr/src/trojan/trojan -v 2>trojan.tmp
-    green "服务端trojan升级完成，当前版本：`cat trojan.tmp | grep "trojan" | awk '{print $4}'`，客户端请在trojan github下载最新版"
-    rm -f trojan.tmp
-    else
-        green "当前版本$curr_version,最新版本$latest_version,无需升级"
+    yellow "检查trojan更新..."
+    
+    if [ ! -f "/usr/src/trojan/trojan" ]; then
+        error_exit "未找到trojan安装"
     fi
-   
-   
+    
+    # 获取当前版本
+    curr_version=$(/usr/src/trojan/trojan -v 2>&1 | grep "trojan" | awk '{print $4}' | sed 's/v//')
+    
+    # 获取最新版本
+    LATEST_JSON=$(curl -s https://api.github.com/repos/trojan-gfw/trojan/releases/latest)
+    latest_version=$(echo $LATEST_JSON | grep -oP '"tag_name": "\K(.*?)(?=")')
+    latest_version=${latest_version#v}
+    
+    if [ -z "$latest_version" ]; then
+        error_exit "获取最新版本失败"
+    fi
+    
+    green "当前版本: $curr_version"
+    green "最新版本: $latest_version"
+    
+    if version_lt "$curr_version" "$latest_version"; then
+        yellow "开始升级..."
+        
+        # 创建临时目录
+        mkdir -p /tmp/trojan_update
+        cd /tmp/trojan_update
+        
+        # 下载新版本
+        download_url="https://github.com/trojan-gfw/trojan/releases/download/v${latest_version}/trojan-${latest_version}-linux-amd64.tar.xz"
+        wget -q "$download_url"
+        check_success "下载失败"
+        
+        # 解压
+        tar xf trojan-${latest_version}-linux-amd64.tar.xz
+        check_success "解压失败"
+        
+        # 备份当前配置
+        cp /usr/src/trojan/server.conf /tmp/server.conf.backup
+        
+        # 替换二进制文件
+        cp -f ./trojan/trojan /usr/src/trojan/
+        chmod +x /usr/src/trojan/trojan
+        
+        # 恢复配置
+        cp /tmp/server.conf.backup /usr/src/trojan/server.conf
+        
+        # 清理
+        cd /
+        rm -rf /tmp/trojan_update
+        
+        # 重启服务
+        systemctl restart trojan
+        check_success "trojan重启失败"
+        
+        new_version=$(/usr/src/trojan/trojan -v 2>&1 | grep "trojan" | awk '{print $4}')
+        green "升级完成，当前版本: $new_version"
+    else
+        green "已是最新版本，无需升级"
+    fi
 }
+
+# 显示trojan信息函数
+function show_info(){
+    if [ -f "/root/trojan_info.txt" ]; then
+        green "=================================="
+        green " Trojan配置信息"
+        green "=================================="
+        cat /root/trojan_info.txt
+        green "=================================="
+    else
+        yellow "未找到trojan配置信息文件"
+    fi
+}
+
+# 主菜单
 start_menu(){
     clear
-    green " ======================================="
-    green " 介绍: 一键安装trojan      "
-    green " 系统: centos7+/debian9+/ubuntu16.04+"
-    green " 作者: xhrm           "
-    blue " 注意:"
-    red " *1. 不要在任何生产环境使用此脚本"
-    red " *2. 不要占用80和443端口"
-    red " *3. 若第二次使用脚本，请先执行卸载trojan"
-    green " ======================================="
+    green " =============================================="
+    green " Trojan一键安装脚本"
+    green " 系统支持: CentOS 7+, Debian 9+, Ubuntu 16.04+"
+    green " 作者: xhrm (优化版)"
+    green " =============================================="
+    yellow " 注意事项:"
+    red "  1. 请确保80和443端口未被占用"
+    red "  2. 域名需正确解析到本服务器"
+    red "  3. 建议使用root用户运行"
+    yellow " =============================================="
     echo
     green " 1. 安装trojan"
     red " 2. 卸载trojan"
     green " 3. 升级trojan"
     green " 4. 修复证书"
+    green " 5. 查看配置信息"
     blue " 0. 退出脚本"
     echo
-    read -p "请输入数字 :" num
+    read -p "请输入数字 [0-5]: " num
+    
     case "$num" in
-    1)
-    preinstall_check
-    ;;
-    2)
-    remove_trojan 
-    ;;
-    3)
-    update_trojan 
-    ;;
-    4)
-    repair_cert 
-    ;;
-    0)
-    exit 1
-    ;;
-    *)
-    clear
-    red "请输入正确数字"
-    sleep 1s
-    start_menu
-    ;;
+        1)
+            preinstall_check
+            ;;
+        2)
+            remove_trojan
+            ;;
+        3)
+            update_trojan
+            ;;
+        4)
+            repair_cert
+            ;;
+        5)
+            show_info
+            ;;
+        0)
+            exit 0
+            ;;
+        *)
+            clear
+            red "请输入正确数字 [0-5]"
+            sleep 2s
+            start_menu
+            ;;
     esac
+    
+    # 返回菜单
+    echo
+    read -p "按回车键返回主菜单..." temp
+    start_menu
 }
+
+# 检查是否为root用户
+if [ "$EUID" -ne 0 ]; then 
+    error_exit "请使用root用户运行此脚本"
+fi
+
+# 启动菜单
 start_menu
