@@ -628,7 +628,7 @@ configTrojan() {
   "mux": {
     "enabled": true,
     "concurrency": 8,
-    "idle_timeout": 0
+    "idle_timeout": 60
   },
   "router": {
     "enabled": false,
