@@ -17,16 +17,7 @@ if [[ "$?" != "0" ]]; then
     exit 1
 fi
 
-BT="false"
 NGINX_CONF_PATH="/etc/nginx/conf.d/"
-
-# 检查是否安装宝塔面板
-res=`which bt 2>/dev/null`
-if [[ "$res" != "" ]]; then
-    BT="true"
-    NGINX_CONF_PATH="/www/server/panel/vhost/nginx/"
-fi
-
 
 ZIP_FILE="trojan-go"
 CONFIG_FILE="/etc/trojan-go/config.json"
@@ -154,8 +145,8 @@ getData() {
     can_change=$1
     if [[ "$can_change" != "yes" ]]; then
         echo " go一键脚本，运行之前请确认如下条件已经具备："
-        echo -e "  ${RED}1. 一个伪装域名${PLAIN}"
-        echo -e "  ${RED}2. 伪装域名DNS解析指向当前服务器ip（${IP}）${PLAIN}"
+        echo -e "  ${RED}1. 至少一个伪装域名${PLAIN}"
+        echo -e "  ${RED}2. 所有伪装域名DNS解析指向当前服务器ip（${IP}）${PLAIN}"
         echo -e "  3. 如果/root目录下有 ${GREEN}*.pem${PLAIN} 和 ${GREEN}*.key${PLAIN} 证书密钥文件，无需理会条件2"
         echo " "
         read -p " 确认满足按y，按其他退出脚本：" answer
@@ -164,20 +155,49 @@ getData() {
         fi
 
         echo ""
-        while true
-        do
-            read -p " 请输入伪装域名：" DOMAIN
-            read -p " 请输入第二个域名(可回车跳过)：" DOMAIN2
-            if [[ -z "${DOMAIN}" ]]; then
-                echo -e " ${RED}伪装域名输入错误，请重新输入！${PLAIN}"
+        
+        # 收集多个域名（支持空格、逗号、逗号+空格分隔）
+        while true; do
+            read -p " 请输入伪装域名（多个域名用空格或逗号分隔，直接回车完成）：" domain_input
+            if [[ -z "$domain_input" ]]; then
+                if [[ ${#DOMAINS[@]} -eq 0 ]]; then
+                    echo -e " ${RED}至少需要一个域名，请重新输入！${PLAIN}"
+                    continue
+                else
+                    break
+                fi
             else
-                break
+                # 将空格和逗号都替换为换行符，然后转换为数组
+                # 先替换逗号为空格
+                domain_input="${domain_input//,/ }"
+                # 然后按空格分割
+                read -ra new_domains <<< "$domain_input"
+                
+                # 统一小写并添加到数组
+                for d in "${new_domains[@]}"; do
+                    d="${d,,}"
+                    # 去除可能的空格
+                    d="$(echo -e "$d" | tr -d '[:space:]')"
+                    if [[ -n "$d" ]]; then
+                        DOMAINS+=("$d")
+                        echo -e " ${GREEN}已添加域名: $d${PLAIN}"
+                    fi
+                done
             fi
         done
-        colorEcho $BLUE " 伪装域名(host)：$DOMAIN"
-        # 统一小写
-        DOMAIN=${DOMAIN,,}
-        DOMAIN2=${DOMAIN2,,}   # 新增行
+        
+        # 去重域名
+        if [[ ${#DOMAINS[@]} -gt 1 ]]; then
+            readarray -t DOMAINS < <(printf '%s\n' "${DOMAINS[@]}" | sort -u)
+        fi
+        
+        # 第一个域名作为主域名
+        DOMAIN="${DOMAINS[0]}"
+        
+        colorEcho $BLUE " 主伪装域名：$DOMAIN"
+        if [[ ${#DOMAINS[@]} -gt 1 ]]; then
+            colorEcho $BLUE " 其他域名：${DOMAINS[@]:1}"
+        fi
 
         echo ""
         # 查找 /root 目录下的 .pem 和 .key 文件
@@ -189,13 +209,16 @@ getData() {
             CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
             KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
         else
-            resolve=`curl -sL ipv4.icanhazip.com`
-            res=`echo -n ${resolve} | grep ${IP}`
-            if [[ -z "${res}" ]]; then
-                echo " ${DOMAIN} 解析结果：${resolve}"
-                echo -e " ${RED}伪装域名未解析到当前服务器IP(${IP})!${PLAIN}"
-                exit 1
-            fi
+            # 验证所有域名的解析
+            for d in "${DOMAINS[@]}"; do
+                resolve=`curl -sL ipv4.icanhazip.com`
+                res=`echo -n ${resolve} | grep ${IP}`
+                if [[ -z "${res}" ]]; then
+                    echo " ${d} 解析结果：${resolve}"
+                    echo -e " ${RED}域名 ${d} 未解析到当前服务器IP(${IP})!${PLAIN}"
+                    exit 1
+                fi
+            done
         fi
     else
         DOMAIN=`grep sni $CONFIG_FILE | cut -d\" -f4`
@@ -284,7 +307,7 @@ getData() {
     echo "    n)不允许，爬虫不会访问网站，访问ip比较单一，但能节省vps流量"
     read -p "  请选择：[y/n] " answer
     if [[ -z "$answer" ]]; then
-        ALLOW_SPIDER="n"  # 默认改为 "n"
+        ALLOW_SPIDER="n"
     elif [[ "${answer,,}" = "n" ]]; then
         ALLOW_SPIDER="n"
     else
@@ -294,6 +317,7 @@ getData() {
 
     colorEcho $BLUE " 允许搜索引擎：$ALLOW_SPIDER"
 }
+
 # ================= 定时重启功能（改为 /etc/cron.d 管理） =================
 DEFAULT_RESTART_TIME="00:10"
 SERVICE_NAME="trojan-go"
@@ -352,51 +376,32 @@ modifyAutoRestartTime() {
 installNginx() {
     echo ""
     colorEcho $BLUE " 安装nginx..."
-    if [[ "$BT" = "false" ]]; then
-        if [[ "$PMT" = "yum" ]]; then
-            $CMD_INSTALL epel-release
-            if [[ "$?" != "0" ]]; then
-                echo '[nginx-stable]
+    if [[ "$PMT" = "yum" ]]; then
+        $CMD_INSTALL epel-release
+        if [[ "$?" != "0" ]]; then
+            echo '[nginx-stable]
 name=nginx stable repo
 baseurl=http://nginx.org/packages/centos/$releasever/$basearch/
 gpgcheck=1
 enabled=1
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true' > /etc/yum.repos.d/nginx.repo
-            fi
-        fi
-        $CMD_INSTALL nginx
-        if [[ "$?" != "0" ]]; then
-            colorEcho $RED " Nginx安装失败"
-            exit 1
-        fi
-        systemctl enable nginx
-    else
-        res=`which nginx 2>/dev/null`
-        if [[ "$?" != "0" ]]; then
-            colorEcho $RED " 您安装了宝塔，请在宝塔后台安装nginx后再运行本脚本"
-            exit 1
         fi
     fi
+    $CMD_INSTALL nginx
+    if [[ "$?" != "0" ]]; then
+        colorEcho $RED " Nginx安装失败"
+        exit 1
+    fi
+    systemctl enable nginx
 }
 
 startNginx() {
-    if [[ "$BT" = "false" ]]; then
-        systemctl start nginx
-    else
-        nginx -c /www/server/nginx/conf/nginx.conf
-    fi
+    systemctl start nginx
 }
 
 stopNginx() {
-    if [[ "$BT" = "false" ]]; then
-        systemctl stop nginx
-    else
-        res=`ps aux | grep -i nginx`
-        if [[ "$res" != "" ]]; then
-            nginx -s stop
-        fi
-    fi
+    systemctl stop nginx
 }
 
 getCert() {
@@ -427,15 +432,15 @@ getCert() {
         source ~/.bashrc
         ~/.acme.sh/acme.sh --upgrade --auto-upgrade
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-        if [[ "$BT" = "false" ]]; then
-           if [[ -z "$DOMAIN2" ]]; then
-        ~/.acme.sh/acme.sh --issue -d $DOMAIN --keylength ec-256 --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx" --standalone
-        else
-        ~/.acme.sh/acme.sh --issue -d $DOMAIN -d $DOMAIN2 --keylength ec-256 --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx" --standalone
-        fi
-        else
-            ~/.acme.sh/acme.sh --issue -d $DOMAIN --keylength ec-256 --pre-hook "nginx -s stop || { echo -n ''; }" --post-hook "nginx -c /www/server/nginx/conf/nginx.conf || { echo -n ''; }" --standalone
-        fi
+        
+        # 构建域名参数
+        DOMAIN_ARGS="-d $DOMAIN"
+        for d in "${DOMAINS[@]:1}"; do
+            DOMAIN_ARGS="$DOMAIN_ARGS -d $d"
+        done
+        
+        ~/.acme.sh/acme.sh --issue $DOMAIN_ARGS --keylength ec-256 --pre-hook "systemctl stop nginx" --post-hook "systemctl restart nginx" --standalone
+        
         [[ -f ~/.acme.sh/${DOMAIN}_ecc/ca.cer ]] || {
             colorEcho $RED " 获取证书失败"
             exit 1
@@ -445,7 +450,7 @@ getCert() {
         ~/.acme.sh/acme.sh --install-cert -d $DOMAIN --ecc \
             --key-file $KEY_FILE \
             --fullchain-file $CERT_FILE \
-            --reloadcmd "service nginx force-reload"
+            --reloadcmd "systemctl reload nginx"
         [[ -f $CERT_FILE && -f $KEY_FILE ]] || {
             colorEcho $RED " 获取证书失败"
             exit 1
@@ -470,7 +475,6 @@ getCert() {
     fi
 }
 
-
 configNginx() {
     mkdir -p /usr/share/nginx/html
     if [[ "$ALLOW_SPIDER" = "n" ]]; then
@@ -480,17 +484,19 @@ configNginx() {
     else
         ROBOT_CONFIG=""
     fi
-    if [[ "$BT" = "false" ]]; then
-        if [[ ! -f /etc/nginx/nginx.conf.bak ]]; then
-            mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
-        fi
-        res=`id nginx 2>/dev/null`
-        if [[ "$?" != "0" ]]; then
-            user="www-data"
-        else
-            user="nginx"
-        fi
-        cat > /etc/nginx/nginx.conf<<-EOF
+    
+    if [[ ! -f /etc/nginx/nginx.conf.bak ]]; then
+        mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
+    fi
+    
+    res=`id nginx 2>/dev/null`
+    if [[ "$?" != "0" ]]; then
+        user="www-data"
+    else
+        user="nginx"
+    fi
+    
+    cat > /etc/nginx/nginx.conf<<-EOF
 user $user;
 worker_processes auto;
 error_log /var/log/nginx/error.log;
@@ -527,15 +533,21 @@ http {
     include /etc/nginx/conf.d/*.conf;
 }
 EOF
-    fi
 
     mkdir -p $NGINX_CONF_PATH
+    
+    # 构建server_name，包含所有域名
+    SERVER_NAMES="${DOMAINS[0]}"
+    for d in "${DOMAINS[@]:1}"; do
+        SERVER_NAMES="$SERVER_NAMES $d"
+    done
+    
     if [[ "$PROXY_URL" = "" ]]; then
         cat > $NGINX_CONF_PATH${DOMAIN}.conf<<-EOF
 server {
     listen 80;
     listen [::]:80;
-    server_name ${DOMAIN}${DOMAIN2:+ $DOMAIN2};
+    server_name ${SERVER_NAMES};
     root /usr/share/nginx/html;
 
     $ROBOT_CONFIG
@@ -546,7 +558,7 @@ EOF
 server {
     listen 80;
     listen [::]:80;
-    server_name ${DOMAIN}${DOMAIN2:+ $DOMAIN2};
+    server_name ${SERVER_NAMES};
     root /usr/share/nginx/html;
     location / {
         proxy_ssl_server_name on;
@@ -752,8 +764,6 @@ setFirewall() {
     fi
 }
 
-
-
 install() {
     # 在脚本开始时检查系统版本
     check_system_version() {
@@ -776,7 +786,6 @@ install() {
 
     $PMT clean all
     [[ "$PMT" = "apt" ]] && $PMT update
-    #echo $CMD_UPGRADE | bash
     $CMD_INSTALL wget vim unzip tar gcc openssl
     $CMD_INSTALL net-tools
     if [[ "$PMT" = "apt" ]]; then
@@ -801,13 +810,10 @@ install() {
 
     setSelinux
 
-
     start
     setAutoRestart
     showInfo
-
 }
-
 
 update() {
     res=`status`
@@ -843,16 +849,14 @@ uninstall() {
         systemctl disable trojan-go
         rm -rf /etc/systemd/system/trojan-go.service
 
-        if [[ "$BT" = "false" ]]; then
-            systemctl disable nginx
-            $CMD_REMOVE nginx
-            if [[ "$PMT" = "apt" ]]; then
-                $CMD_REMOVE nginx-common
-            fi
-            rm -rf /etc/nginx/nginx.conf
-            if [[ -f /etc/nginx/nginx.conf.bak ]]; then
-                mv /etc/nginx/nginx.conf.bak /etc/nginx/nginx.conf
-            fi
+        systemctl disable nginx
+        $CMD_REMOVE nginx
+        if [[ "$PMT" = "apt" ]]; then
+            $CMD_REMOVE nginx-common
+        fi
+        rm -rf /etc/nginx/nginx.conf
+        if [[ -f /etc/nginx/nginx.conf.bak ]]; then
+            mv /etc/nginx/nginx.conf.bak /etc/nginx/nginx.conf
         fi
 
         rm -rf $NGINX_CONF_PATH${domain}.conf
@@ -887,7 +891,6 @@ stop() {
     colorEcho $BLUE " go停止成功"
 }
 
-
 restart() {
     res=`status`
     if [[ $res -lt 2 ]]; then
@@ -919,7 +922,6 @@ reconfig() {
     showInfo
 }
 
-
 showInfo() {
     res=`status`
     if [[ $res -lt 2 ]]; then
@@ -942,7 +944,16 @@ showInfo() {
     echo -e " ${BLUE}go配置文件: ${PLAIN} ${RED}${CONFIG_FILE}${PLAIN}"
     echo -e " ${BLUE}go配置信息：${PLAIN}"
     echo -e "   IP：${RED}$IP${PLAIN}"
-    echo -e "   伪装域名/主机名(host)/SNI/peer名称：${RED}$domain${PLAIN}"
+    echo -e "   主域名/主机名(host)/SNI/peer名称：${RED}$domain${PLAIN}"
+    
+    # 从nginx配置中获取所有域名
+    if [[ -f $NGINX_CONF_PATH${domain}.conf ]]; then
+        server_names=$(grep server_name $NGINX_CONF_PATH${domain}.conf | sed 's/server_name//g' | tr -d ';' | xargs)
+        if [[ -n "$server_names" && "$server_names" != "$domain" ]]; then
+            echo -e "   所有域名：${RED}$server_names${PLAIN}"
+        fi
+    fi
+    
     echo -e "   端口(port)：${RED}$port${PLAIN}"
     echo -e "   密码(password)：${RED}$password${PLAIN}"
     if [[ $ws = "true" ]]; then
