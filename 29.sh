@@ -35,18 +35,24 @@ getSystemInfo() {
 }
 
 # 获取IPv4地址
-IP=`curl -sL ipv4.icanhazip.com`
-if [[ "$?" != "0" ]]; then
-    echo "获取IPv4地址失败，尝试备用源..."
-    IP=`curl -sL ifconfig.me`
-    if [[ "$?" != "0" ]]; then
-        IP=`curl -sL icanhazip.com`
-        if [[ "$?" != "0" ]]; then
-            echo -e " ${RED}获取IPv4地址失败，请检查网络${PLAIN}"
-            exit 1
-        fi
+getIP() {
+    IP=$(curl -sL --max-time 5 ipv4.icanhazip.com 2>/dev/null)
+    if [[ -z "$IP" ]]; then
+        IP=$(curl -sL --max-time 5 ifconfig.me 2>/dev/null)
     fi
-fi
+    if [[ -z "$IP" ]]; then
+        IP=$(curl -sL --max-time 5 icanhazip.com 2>/dev/null)
+    fi
+    if [[ -z "$IP" ]]; then
+        IP=$(hostname -I | awk '{print $1}')
+    fi
+    if [[ -z "$IP" ]]; then
+        echo -e " ${RED}获取IPv4地址失败，请检查网络${PLAIN}"
+        exit 1
+    fi
+}
+
+getIP
 
 NGINX_CONF_PATH="/etc/nginx/conf.d/"
 ZIP_FILE="trojan-go"
@@ -72,34 +78,23 @@ checkSystem() {
         CMD_INSTALL="yum install -y "
         CMD_REMOVE="yum remove -y "
         CMD_UPGRADE="yum update -y"
-        
-        # CentOS 8/9 需要启用 EPEL
-        if [[ "$VER" =~ ^8 ]] || [[ "$VER" =~ ^9 ]]; then
-            if ! rpm -q epel-release >/dev/null 2>&1; then
-                echo "安装 EPEL 仓库..."
-                $CMD_INSTALL epel-release
-            fi
-        fi
     elif [[ "$OS" = "debian" ]]; then
         PMT="apt"
         CMD_INSTALL="apt install -y "
         CMD_REMOVE="apt remove -y "
         CMD_UPGRADE="apt update; apt upgrade -y; apt autoremove -y"
-        echo "更新软件包列表..."
         apt update >/dev/null 2>&1
     fi
     
     # 检查 systemd
-    res=`which systemctl 2>/dev/null`
-    if [[ "$?" != "0" ]]; then
+    if ! command -v systemctl &>/dev/null; then
         echo -e " ${RED}系统版本过低，请升级到最新版本${PLAIN}"
         exit 1
     fi
 }
 
 status() {
-    trojan_cmd="$(command -v trojan-go)"
-    if [[ "$trojan_cmd" = "" ]]; then
+    if ! command -v trojan-go &>/dev/null; then
         echo 0
         return
     fi
@@ -107,12 +102,11 @@ status() {
         echo 1
         return
     fi
-    port=`grep local_port $CONFIG_FILE|cut -d: -f2| tr -d \",' '`
-    res=`ss -ntlp 2>/dev/null | grep ${port} | grep trojan-go`
-    if [[ -z "$res" ]]; then
-        echo 2
-    else
+    port=$(grep local_port $CONFIG_FILE 2>/dev/null | cut -d: -f2 | tr -d \",' ')
+    if systemctl is-active trojan-go &>/dev/null; then
         echo 3
+    else
+        echo 2
     fi
 }
 
@@ -132,42 +126,33 @@ statusText() {
 }
 
 getVersion() {
-    # 使用固定的稳定版本
-    VERSION="1.0.5"
-    colorEcho $BLUE "使用 trojan-go 版本: $VERSION"
+    # 获取最新版本
+    VERSION=$(curl -sL https://api.github.com/repos/p4gefau1t/trojan-go/releases/latest | grep tag_name | sed -E 's/.*"v?(.*)".*/\1/' | head -1)
+    if [[ -z "$VERSION" ]]; then
+        VERSION="0.10.0"
+    fi
+    colorEcho $BLUE "使用 trojan-go 版本: v$VERSION"
 }
 
 archAffix() {
     case "${1:-"$(uname -m)"}" in
-        i686|i386)
-            echo '386'
-        ;;
         x86_64|amd64)
             echo 'amd64'
         ;;
-        armv7l|armv6l)
+        aarch64|arm64)
+            echo 'arm64'
+        ;;
+        armv7l)
             echo 'armv7'
         ;;
-        aarch64|armv8l)
-            echo 'armv8'
+        armv6l)
+            echo 'armv6'
         ;;
-        *arm*)
-            echo 'arm'
-        ;;
-        mips64le)
-            echo 'mips64le'
-        ;;
-        mips64)
-            echo 'mips64'
-        ;;
-        mipsle)
-            echo 'mipsle-softfloat'
-        ;;
-        mips)
-            echo 'mips-softfloat'
+        i686|i386)
+            echo '386'
         ;;
         *)
-            echo -e " ${RED}不支持的架构${PLAIN}"
+            echo -e " ${RED}不支持的架构: $(uname -m)${PLAIN}"
             exit 1
         ;;
     esac
@@ -188,50 +173,49 @@ getData() {
         fi
 
         echo ""
-        while true
-        do
+        while true; do
             read -p " 请输入伪装域名：" DOMAIN
-            if [[ -z "${DOMAIN}" ]]; then
-                echo -e " ${RED}伪装域名输入错误，请重新输入！${PLAIN}"
-            else
+            if [[ -n "${DOMAIN}" ]]; then
                 break
+            else
+                echo -e " ${RED}伪装域名不能为空，请重新输入！${PLAIN}"
             fi
         done
         colorEcho $BLUE " 伪装域名(host)：$DOMAIN"
 
         echo ""
         DOMAIN=${DOMAIN,,}
-        # 查找 /root 目录下的 .pem 和 .key 文件
-        pem_file=$(find /root -maxdepth 1 -type f \( -name "*.pem" -o -name "*.crt" \) | head -1)
-        key_file=$(find /root -maxdepth 1 -type f -name "*.key" | head -1)
+        # 查找 /root 目录下的证书文件
+        CERT_FILE=$(find /root -maxdepth 1 -type f \( -name "*.pem" -o -name "*.crt" \) | head -1)
+        KEY_FILE=$(find /root -maxdepth 1 -type f -name "*.key" | head -1)
 
-        if [[ -f "$pem_file" && -f "$key_file" ]]; then
+        if [[ -n "$CERT_FILE" && -n "$KEY_FILE" ]]; then
             echo -e "${GREEN} 检测到自有证书，将使用其部署${PLAIN}"
-            CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
-            KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
             USE_OWN_CERT=true
         else
             USE_OWN_CERT=false
             # 检查域名解析
-            resolve=$(dig +short $DOMAIN @8.8.8.8 | head -1)
+            echo "检查域名解析..."
+            resolve=$(dig +short $DOMAIN @8.8.8.8 2>/dev/null | head -1)
             if [[ -z "$resolve" ]]; then
                 resolve=$(nslookup $DOMAIN 8.8.8.8 2>/dev/null | grep -A1 "Name:" | tail -1 | awk '{print $2}')
             fi
             if [[ -z "$resolve" ]]; then
-                resolve=$(ping -c1 $DOMAIN | head -1 | grep -oP '(?<=\().*?(?=\))')
+                resolve=$(ping -c1 $DOMAIN 2>/dev/null | head -1 | grep -oP '(?<=\().*?(?=\))')
             fi
             if [[ "$resolve" != "$IP" ]]; then
-                echo " ${DOMAIN} 解析结果：${resolve}"
+                echo " ${DOMAIN} 解析结果：${resolve:-未解析}"
                 echo -e " ${RED}伪装域名未解析到当前服务器IP(${IP})!${PLAIN}"
-                echo -e " ${YELLOW}请确保域名解析正确，或使用自有证书${PLAIN}"
+                echo -e " ${YELLOW}请确保域名解析正确，或上传证书到 /root 目录${PLAIN}"
                 exit 1
             fi
+            echo -e "${GREEN} 域名解析验证通过${PLAIN}"
         fi
     else
-        DOMAIN=`grep sni $CONFIG_FILE | cut -d\" -f4`
-        CERT_FILE=`grep cert $CONFIG_FILE | cut -d\" -f4`
-        KEY_FILE=`grep key $CONFIG_FILE | cut -d\" -f4`
-        read -p " 是否转换成WS版本？[y/n]" answer
+        DOMAIN=$(grep '"sni"' $CONFIG_FILE 2>/dev/null | cut -d\" -f4)
+        CERT_FILE=$(grep '"cert"' $CONFIG_FILE 2>/dev/null | cut -d\" -f4)
+        KEY_FILE=$(grep '"key"' $CONFIG_FILE 2>/dev/null | cut -d\" -f4)
+        read -p " 是否转换成WS版本？[y/n] " answer
         if [[ "${answer,,}" = "y" ]]; then
             WS="true"
         fi
@@ -239,7 +223,7 @@ getData() {
 
     echo ""
     read -p " 请设置go密码（不输则随机生成）:" PASSWORD
-    [[ -z "$PASSWORD" ]] && PASSWORD=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1`
+    [[ -z "$PASSWORD" ]] && PASSWORD=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
     colorEcho $BLUE " go密码：$PASSWORD"
     echo ""
 
@@ -253,18 +237,17 @@ getData() {
 
     if [[ ${WS} = "true" ]]; then
         echo ""
-        while true
-        do
+        while true; do
             read -p " 请输入伪装路径，以/开头(不懂请直接回车)：" WSPATH
             if [[ -z "${WSPATH}" ]]; then
-                len=`shuf -i5-12 -n1`
-                ws=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w $len | head -n 1`
+                len=$(shuf -i5-12 -n1)
+                ws=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w $len | head -n 1)
                 WSPATH="/$ws"
                 break
             elif [[ "${WSPATH:0:1}" != "/" ]]; then
                 echo " 伪装路径必须以/开头！"
             elif [[ "${WSPATH}" = "/" ]]; then
-                echo  " 不能使用根路径！"
+                echo " 不能使用根路径！"
             else
                 break
             fi
@@ -302,10 +285,9 @@ getData() {
         exit 1
     esac
 
-    REMOTE_HOST=`echo ${PROXY_URL} | cut -d/ -f3`
+    REMOTE_HOST=$(echo ${PROXY_URL} | cut -d/ -f3)
     echo ""
     colorEcho $BLUE " 伪装网站：$PROXY_URL"
-
 
     echo ""
     colorEcho $BLUE " 是否允许搜索引擎爬取网站？[默认：不允许]"
@@ -373,7 +355,7 @@ setAutoRestart() {
     echo "$minute $hour * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
     chmod 644 $CRON_FILE
 
-    echo -e " ${BLUE}定时任务已设置：每天 $hour:$minute 清理日志并自动重启 $SERVICE_NAME${PLAIN}"
+    echo -e " ${BLUE}定时任务已设置：每天 $hour:$minute 清理日志并重启 $SERVICE_NAME${PLAIN}"
 }
 
 disableAutoRestart() {
@@ -406,7 +388,6 @@ installNginx() {
     colorEcho $BLUE " 安装nginx..."
     
     if [[ "$OS" = "centos" ]]; then
-        # CentOS 使用 nginx 官方源
         if [[ ! -f /etc/yum.repos.d/nginx.repo ]]; then
             cat > /etc/yum.repos.d/nginx.repo <<-EOF
 [nginx-stable]
@@ -420,26 +401,31 @@ EOF
         fi
     fi
     
-    $CMD_INSTALL nginx
-    if [[ "$?" != "0" ]]; then
-        colorEcho $RED " Nginx安装失败，尝试使用系统默认源..."
-        if [[ "$OS" = "centos" ]]; then
-            $CMD_INSTALL nginx
+    if ! command -v nginx &>/dev/null; then
+        $CMD_INSTALL nginx
+        if [[ "$?" != "0" ]]; then
+            colorEcho $RED " Nginx安装失败"
+            exit 1
         fi
+    else
+        colorEcho $GREEN " Nginx 已安装"
     fi
+    
     systemctl enable nginx
 }
 
 startNginx() {
     systemctl start nginx 2>/dev/null || true
+    sleep 1
+    if ! systemctl is-active nginx &>/dev/null; then
+        colorEcho $YELLOW " Nginx 启动失败，尝试重新安装..."
+        $CMD_INSTALL nginx --reinstall 2>/dev/null || $CMD_INSTALL nginx
+        systemctl start nginx
+    fi
 }
 
 stopNginx() {
     systemctl stop nginx 2>/dev/null || true
-}
-
-reloadNginx() {
-    systemctl reload nginx 2>/dev/null || startNginx
 }
 
 getCert() {
@@ -447,30 +433,26 @@ getCert() {
     
     if [[ "$USE_OWN_CERT" = "true" ]]; then
         echo -e "${GREEN} 使用自有证书${PLAIN}"
-        cp "$pem_file" "$CERT_FILE"
-        cp "$key_file" "$KEY_FILE"
+        local target_cert="/etc/trojan-go/${DOMAIN}.pem"
+        local target_key="/etc/trojan-go/${DOMAIN}.key"
+        cp "$CERT_FILE" "$target_cert"
+        cp "$KEY_FILE" "$target_key"
+        CERT_FILE="$target_cert"
+        KEY_FILE="$target_key"
         return
     fi
     
     # 检查是否已有证书
-    if [[ -f "$CERT_FILE" && -f "$KEY_FILE" ]]; then
+    if [[ -f "/etc/trojan-go/${DOMAIN}.pem" && -f "/etc/trojan-go/${DOMAIN}.key" ]]; then
         echo -e "${GREEN} 检测到已有证书，跳过申请${PLAIN}"
+        CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
+        KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
         return
     fi
     
-    stopNginx
-    systemctl stop trojan-go 2>/dev/null || true
-    sleep 2
+    # 确保 nginx 运行（用于验证）
+    startNginx
     
-    # 检查端口占用
-    res=$(ss -tlnp 2>/dev/null | grep -E ':80 |:443 ')
-    if [[ "${res}" != "" ]]; then
-        echo -e "${YELLOW} 检测到端口占用，尝试停止相关服务...${PLAIN}"
-        systemctl stop httpd 2>/dev/null || true
-        systemctl stop apache2 2>/dev/null || true
-        sleep 2
-    fi
-
     $CMD_INSTALL socat openssl curl
     
     # 安装 acme.sh
@@ -484,7 +466,14 @@ getCert() {
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
     
     echo "申请 SSL 证书..."
-    ~/.acme.sh/acme.sh --issue -d $DOMAIN --keylength ec-256 --standalone
+    # 使用 webroot 模式而不是 standalone，避免端口冲突
+    ~/.acme.sh/acme.sh --issue -d $DOMAIN --keylength ec-256 --webroot /usr/share/nginx/html --force
+    
+    if [[ ! -f ~/.acme.sh/${DOMAIN}_ecc/ca.cer ]]; then
+        colorEcho $RED " 获取证书失败，尝试 standalone 模式..."
+        stopNginx
+        ~/.acme.sh/acme.sh --issue -d $DOMAIN --keylength ec-256 --standalone --force
+    fi
     
     if [[ ! -f ~/.acme.sh/${DOMAIN}_ecc/ca.cer ]]; then
         colorEcho $RED " 获取证书失败"
@@ -495,8 +484,7 @@ getCert() {
     KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
     ~/.acme.sh/acme.sh --install-cert -d $DOMAIN --ecc \
         --key-file $KEY_FILE \
-        --fullchain-file $CERT_FILE \
-        --reloadcmd "systemctl reload nginx"
+        --fullchain-file $CERT_FILE
         
     if [[ ! -f $CERT_FILE || ! -f $KEY_FILE ]]; then
         colorEcho $RED " 安装证书失败"
@@ -513,12 +501,8 @@ configNginx() {
     cat > /usr/share/nginx/html/index.html <<-EOF
 <!DOCTYPE html>
 <html>
-<head>
-    <title>Welcome</title>
-</head>
-<body>
-    <h1>Welcome to nginx!</h1>
-</body>
+<head><title>Welcome</title></head>
+<body><h1>Welcome to nginx!</h1></body>
 </html>
 EOF
 
@@ -542,7 +526,7 @@ EOF
         user="www-data"
     fi
     
-    # 生成 nginx 配置
+    # 生成简化的 nginx 配置
     cat > /etc/nginx/nginx.conf <<-EOF
 user $user;
 worker_processes auto;
@@ -554,23 +538,22 @@ events {
 }
 
 http {
-    log_format  main  '\$remote_addr - \$remote_user [\$time_local] "\$request" '
-                      '\$status \$body_bytes_sent "\$http_referer" '
-                      '"\$http_user_agent" "\$http_x_forwarded_for"';
-
-    access_log  /var/log/nginx/access.log  main;
+    log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
+                    '\$status \$body_bytes_sent "\$http_referer" '
+                    '"\$http_user_agent" "\$http_x_forwarded_for"';
+    access_log /var/log/nginx/access.log main;
     server_tokens off;
-
-    sendfile            on;
-    tcp_nopush          on;
-    tcp_nodelay         on;
-    keepalive_timeout   65;
+    
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
     types_hash_max_size 2048;
-    gzip                on;
-
-    include             /etc/nginx/mime.types;
-    default_type        application/octet-stream;
-
+    gzip on;
+    
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    
     include /etc/nginx/conf.d/*.conf;
 }
 EOF
@@ -584,7 +567,6 @@ server {
     server_name ${DOMAIN};
     root /usr/share/nginx/html;
     index index.html;
-
     $ROBOT_CONFIG
 }
 EOF
@@ -602,32 +584,47 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header Accept-Encoding '';
         sub_filter "$REMOTE_HOST" "$DOMAIN";
         sub_filter_once off;
     }
-    
     $ROBOT_CONFIG
 }
 EOF
     fi
+    
+    # 启动 nginx
+    startNginx
 }
 
 downloadFile() {
-    SUFFIX=`archAffix`
+    SUFFIX=$(archAffix)
     
-    # 使用 GitHub 代理或直接下载
+    # GitHub 下载地址
     DOWNLOAD_URL="https://github.com/p4gefau1t/trojan-go/releases/download/v${VERSION}/trojan-go-linux-${SUFFIX}.zip"
     
     echo "下载 trojan-go v${VERSION}..."
-    wget -q --show-progress -O /tmp/${ZIP_FILE}.zip $DOWNLOAD_URL || {
-        # 备用下载地址
-        DOWNLOAD_URL="https://ghproxy.com/https://github.com/p4gefau1t/trojan-go/releases/download/v${VERSION}/trojan-go-linux-${SUFFIX}.zip"
-        wget -q --show-progress -O /tmp/${ZIP_FILE}.zip $DOWNLOAD_URL
-    }
     
-    if [[ ! -f /tmp/${ZIP_FILE}.zip ]] || [[ ! -s /tmp/${ZIP_FILE}.zip ]]; then
-        echo -e "${RED} go安装文件下载失败，请检查网络或重试${PLAIN}"
+    # 尝试多个下载源
+    for url in "$DOWNLOAD_URL" \
+               "https://ghproxy.net/https://github.com/p4gefau1t/trojan-go/releases/download/v${VERSION}/trojan-go-linux-${SUFFIX}.zip" \
+               "https://download.fastgit.org/p4gefau1t/trojan-go/releases/download/v${VERSION}/trojan-go-linux-${SUFFIX}.zip"; do
+        echo "尝试下载: $url"
+        wget -q --show-progress -O /tmp/${ZIP_FILE}.zip "$url"
+        
+        if [[ -f /tmp/${ZIP_FILE}.zip ]]; then
+            local size=$(stat -c%s /tmp/${ZIP_FILE}.zip 2>/dev/null || stat -f%z /tmp/${ZIP_FILE}.zip 2>/dev/null)
+            if [[ $size -gt 1000000 ]]; then
+                echo "下载成功，文件大小: $((size/1024/1024)) MB"
+                break
+            else
+                echo "下载的文件太小 ($size bytes)，可能不正确"
+                rm -f /tmp/${ZIP_FILE}.zip
+            fi
+        fi
+    done
+    
+    if [[ ! -f /tmp/${ZIP_FILE}.zip ]]; then
+        echo -e "${RED} trojan-go 下载失败，请检查网络${PLAIN}"
         exit 1
     fi
     
@@ -639,18 +636,15 @@ downloadFile() {
     fi
     
     echo "下载静态网站模板..."
-    wget -q --show-progress -O /tmp/html.zip https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip || {
-        # 如果下载失败，创建默认页面
+    wget -q --show-progress -O /tmp/html.zip https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip 2>/dev/null || {
         echo "创建默认静态页面..."
-        mkdir -p /usr/share/nginx/html
         cat > /usr/share/nginx/html/index.html <<-EOF
 <!DOCTYPE html>
 <html>
 <head><title>Welcome</title></head>
-<body><h1>Welcome</h1></body>
+<body><h1>Welcome</h1><p>This is a default page.</p></body>
 </html>
 EOF
-        return
     }
 }
 
@@ -660,31 +654,25 @@ installTrojan() {
     # 解压 trojan-go
     unzip -q /tmp/${ZIP_FILE}.zip -d /tmp/${ZIP_FILE}
     if [[ ! -f /tmp/${ZIP_FILE}/trojan-go ]]; then
-        echo -e "${RED} 解压失败，文件结构不正确${PLAIN}"
+        echo -e "${RED} 解压失败${PLAIN}"
         ls -la /tmp/${ZIP_FILE}/
         exit 1
     fi
     
-    # 解压静态网站模板（如果存在）
+    # 解压静态网站模板
     if [[ -f /tmp/html.zip ]]; then
-        rm -rf /usr/share/nginx/html/*
         unzip -q /tmp/html.zip -d /usr/share/nginx/html/ 2>/dev/null || true
+        rm -f /tmp/html.zip
     fi
     
     # 安装 trojan-go
     cp /tmp/${ZIP_FILE}/trojan-go /usr/bin/
     chmod +x /usr/bin/trojan-go
     
-    # 创建配置目录
+    # 复制数据文件
     mkdir -p /etc/trojan-go
-    
-    # 复制数据文件（如果存在）
-    if [[ -f /tmp/${ZIP_FILE}/geoip.dat ]]; then
-        cp /tmp/${ZIP_FILE}/geoip.dat /etc/trojan-go/
-    fi
-    if [[ -f /tmp/${ZIP_FILE}/geosite.dat ]]; then
-        cp /tmp/${ZIP_FILE}/geosite.dat /etc/trojan-go/
-    fi
+    [[ -f /tmp/${ZIP_FILE}/geoip.dat ]] && cp /tmp/${ZIP_FILE}/geoip.dat /etc/trojan-go/
+    [[ -f /tmp/${ZIP_FILE}/geosite.dat ]] && cp /tmp/${ZIP_FILE}/geosite.dat /etc/trojan-go/
     
     # 创建 systemd 服务文件
     cat > /etc/systemd/system/trojan-go.service <<-EOF
@@ -694,7 +682,6 @@ After=network.target nss-lookup.target
 
 [Service]
 Type=simple
-StandardError=journal
 ExecStart=/usr/bin/trojan-go -config /etc/trojan-go/config.json
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
@@ -708,13 +695,12 @@ EOF
     systemctl enable trojan-go
     
     rm -rf /tmp/${ZIP_FILE}
-    colorEcho $BLUE " go安装成功！"
+    colorEcho $BLUE " trojan-go 安装成功！"
 }
 
 configTrojan() {
     mkdir -p /etc/trojan-go
     
-    # 处理 websocket 配置
     WS_BOOL="false"
     [[ "$WS" = "true" ]] && WS_BOOL="true"
     
@@ -738,9 +724,7 @@ configTrojan() {
         "cert": "${CERT_FILE}",
         "key": "${KEY_FILE}",
         "sni": "${DOMAIN}",
-        "alpn": [
-            "http/1.1"
-        ],
+        "alpn": ["http/1.1"],
         "session_ticket": true,
         "reuse_session": true,
         "fingerprint": "chrome"
@@ -763,34 +747,17 @@ setSelinux() {
 }
 
 setFirewall() {
-    # 检查防火墙状态并开放端口
     if command -v firewall-cmd &>/dev/null && systemctl is-active firewalld &>/dev/null; then
-        firewall-cmd --permanent --add-service=http
-        firewall-cmd --permanent --add-service=https
-        if [[ "$PORT" != "443" ]]; then
-            firewall-cmd --permanent --add-port=${PORT}/tcp
-        fi
-        firewall-cmd --reload
+        firewall-cmd --permanent --add-service=http 2>/dev/null
+        firewall-cmd --permanent --add-service=https 2>/dev/null
+        [[ "$PORT" != "443" ]] && firewall-cmd --permanent --add-port=${PORT}/tcp 2>/dev/null
+        firewall-cmd --reload 2>/dev/null
         echo -e "${GREEN} 防火墙规则已添加${PLAIN}"
     elif command -v ufw &>/dev/null && ufw status | grep -q active; then
-        ufw allow http
-        ufw allow https
-        if [[ "$PORT" != "443" ]]; then
-            ufw allow ${PORT}/tcp
-        fi
+        ufw allow http >/dev/null 2>&1
+        ufw allow https >/dev/null 2>&1
+        [[ "$PORT" != "443" ]] && ufw allow ${PORT}/tcp >/dev/null 2>&1
         echo -e "${GREEN} UFW 规则已添加${PLAIN}"
-    elif command -v iptables &>/dev/null; then
-        if ! iptables -C INPUT -p tcp --dport 80 -j ACCEPT &>/dev/null; then
-            iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-            iptables -I INPUT -p tcp --dport 443 -j ACCEPT
-            if [[ "$PORT" != "443" ]]; then
-                iptables -I INPUT -p tcp --dport ${PORT} -j ACCEPT
-            fi
-            # 保存规则
-            if command -v iptables-save &>/dev/null; then
-                iptables-save > /etc/iptables.rules 2>/dev/null || true
-            fi
-        fi
     fi
 }
 
@@ -804,31 +771,27 @@ install() {
 
     if [[ "$OS" = "centos" ]]; then
         yum clean all
-    else
-        apt update
     fi
     
-    $CMD_INSTALL wget vim unzip tar gcc openssl curl net-tools dnsutils bind-utils 2>/dev/null || \
+    $CMD_INSTALL wget vim unzip tar gcc openssl curl net-tools dnsutils 2>/dev/null || \
+    $CMD_INSTALL wget vim unzip tar gcc openssl curl net-tools bind-utils 2>/dev/null || \
     $CMD_INSTALL wget vim unzip tar gcc openssl curl net-tools
     
     if [[ "$OS" = "debian" ]]; then
-        $CMD_INSTALL libssl-dev g++
+        $CMD_INSTALL libssl-dev g++ 2>/dev/null
     fi
     
-    res=$(which unzip 2>/dev/null)
-    if [[ $? -ne 0 ]]; then
+    if ! command -v unzip &>/dev/null; then
         echo -e " ${RED}unzip安装失败，请检查网络${PLAIN}"
         exit 1
     fi
 
     installNginx
-    setFirewall
     configNginx
-    startNginx
-    
+    setFirewall
     getCert
 
-    echo " 安装go..."
+    echo " 安装 trojan-go..."
     getVersion
     downloadFile
     installTrojan
@@ -842,34 +805,33 @@ install() {
 }
 
 start() {
-    res=`status`
+    res=$(status)
     if [[ $res -lt 2 ]]; then
-        echo -e "${RED}go未安装，请先安装！${PLAIN}"
+        echo -e "${RED}trojan-go未安装，请先安装！${PLAIN}"
         return
     fi
 
     startNginx
     systemctl restart trojan-go
     sleep 2
-    port=`grep local_port $CONFIG_FILE|cut -d: -f2| tr -d \",' '`
-    res=`ss -ntlp 2>/dev/null | grep ${port} | grep trojan-go`
-    if [[ "$res" = "" ]]; then
-        colorEcho $RED " go启动失败，请检查日志: journalctl -u trojan-go -n 50"
+    
+    if systemctl is-active trojan-go &>/dev/null; then
+        colorEcho $BLUE " trojan-go 启动成功"
     else
-        colorEcho $BLUE " go启动成功"
+        colorEcho $RED " trojan-go 启动失败，请查看日志: journalctl -u trojan-go -n 30"
     fi
 }
 
 stop() {
     stopNginx
     systemctl stop trojan-go
-    colorEcho $BLUE " go停止成功"
+    colorEcho $BLUE " trojan-go 停止成功"
 }
 
 restart() {
-    res=`status`
+    res=$(status)
     if [[ $res -lt 2 ]]; then
-        echo -e " ${RED}go未安装，请先安装！${PLAIN}"
+        echo -e " ${RED}trojan-go未安装，请先安装！${PLAIN}"
         return
     fi
 
@@ -878,19 +840,16 @@ restart() {
 }
 
 reconfig() {
-    res=`status`
+    res=$(status)
     if [[ $res -lt 2 ]]; then
-        echo -e " ${RED}go未安装，请先安装！${PLAIN}"
+        echo -e " ${RED}trojan-go未安装，请先安装！${PLAIN}"
         return
     fi
 
-    line1=`grep -n 'websocket' $CONFIG_FILE  | head -n1 | cut -d: -f1`
-    line11=`expr $line1 + 1`
-    WS=`sed -n "${line11}p" $CONFIG_FILE | cut -d: -f2 | tr -d \",' '`
+    WS=$(grep '"websocket"' $CONFIG_FILE -A1 | tail -1 | grep -o 'true\|false')
     getData true
     configTrojan
     setFirewall
-    getCert
     configNginx
     stop
     start
@@ -898,40 +857,40 @@ reconfig() {
 }
 
 showInfo() {
-    res=`status`
+    res=$(status)
     if [[ $res -lt 2 ]]; then
-        echo -e " ${RED}go未安装，请先安装！${PLAIN}"
+        echo -e " ${RED}trojan-go未安装，请先安装！${PLAIN}"
         return
     fi
 
-    domain=`grep '"sni"' $CONFIG_FILE | cut -d\" -f4`
-    port=`grep local_port $CONFIG_FILE | cut -d: -f2 | tr -d \",' '`
-    password=`grep -A1 '"password"' $CONFIG_FILE | tail -1 | tr -d \"' ', | xargs`
-    ws=`grep '"websocket"' $CONFIG_FILE -A1 | tail -1 | grep -o 'true\|false'`
+    domain=$(grep '"sni"' $CONFIG_FILE 2>/dev/null | cut -d\" -f4)
+    port=$(grep local_port $CONFIG_FILE 2>/dev/null | cut -d: -f2 | tr -d \",' ')
+    password=$(grep -A1 '"password"' $CONFIG_FILE 2>/dev/null | tail -1 | tr -d \"' ', | xargs)
+    ws=$(grep '"websocket"' $CONFIG_FILE -A1 | tail -1 | grep -o 'true\|false')
     
     echo ""
-    echo -n " go运行状态："
+    echo -n " trojan-go 运行状态："
     statusText
     echo ""
     echo -e " ${BLUE}系统信息: ${PLAIN}${OS} ${VER}"
-    echo -e " ${BLUE}go配置文件: ${PLAIN} ${RED}${CONFIG_FILE}${PLAIN}"
-    echo -e " ${BLUE}go配置信息：${PLAIN}"
-    echo -e "   IP：${RED}$IP${PLAIN}"
-    echo -e "   伪装域名/主机名(host)/SNI/peer名称：${RED}$domain${PLAIN}"
-    echo -e "   端口(port)：${RED}$port${PLAIN}"
-    echo -e "   密码(password)：${RED}$password${PLAIN}"
+    echo -e " ${BLUE}配置文件: ${PLAIN} ${RED}${CONFIG_FILE}${PLAIN}"
+    echo -e " ${BLUE}配置信息：${PLAIN}"
+    echo -e "   IP：${RED}${IP}${PLAIN}"
+    echo -e "   伪装域名/SNI：${RED}${domain}${PLAIN}"
+    echo -e "   端口：${RED}${port}${PLAIN}"
+    echo -e "   密码：${RED}${password}${PLAIN}"
     if [[ "$ws" = "true" ]]; then
-        echo -e "   websocket：${RED}true${PLAIN}"
-        wspath=`grep '"path"' $CONFIG_FILE | cut -d: -f2 | tr -d \",' '`
-        echo -e "   ws路径(ws path)：${RED}${wspath}${PLAIN}"
+        echo -e "   WebSocket：${RED}true${PLAIN}"
+        wspath=$(grep '"path"' $CONFIG_FILE 2>/dev/null | cut -d: -f2 | tr -d \",' ')
+        echo -e "   WS路径：${RED}${wspath}${PLAIN}"
     fi
     echo ""
 }
 
 showLog() {
-    res=`status`
+    res=$(status)
     if [[ $res -lt 2 ]]; then
-        echo -e "${RED}go未安装，请先安装！${PLAIN}"
+        echo -e "${RED}trojan-go未安装，请先安装！${PLAIN}"
         return
     fi
 
@@ -955,20 +914,20 @@ showCronStatus() {
 
 menu() {
     clear
-    echo -e "  ${RED}GO install${PLAIN}"
+    echo -e "  ${RED}Trojan-Go 一键安装脚本${PLAIN}"
     echo -e "  支持系统: CentOS 7/8/9, Debian, Ubuntu"
     echo ""
 
-    echo -e "  ${GREEN}1.${PLAIN}  安装go"
-    echo -e "  ${GREEN}2.${PLAIN}  安装go+WS"
+    echo -e "  ${GREEN}1.${PLAIN}  安装 trojan-go"
+    echo -e "  ${GREEN}2.${PLAIN}  安装 trojan-go + WebSocket"
     echo " -------------"
-    echo -e "  ${GREEN}3.${PLAIN}  启动go"
-    echo -e "  ${GREEN}4.${PLAIN}  重启go"
-    echo -e "  ${GREEN}5.${PLAIN}  停止go"
+    echo -e "  ${GREEN}3.${PLAIN}  启动 trojan-go"
+    echo -e "  ${GREEN}4.${PLAIN}  重启 trojan-go"
+    echo -e "  ${GREEN}5.${PLAIN}  停止 trojan-go"
     echo " -------------"
-    echo -e "  ${GREEN}6.${PLAIN}  查看go配置"
-    echo -e "  ${GREEN}7.${RED}  修改go配置${PLAIN}"
-    echo -e "  ${GREEN}8.${PLAIN}  查看go日志"
+    echo -e "  ${GREEN}6.${PLAIN}  查看配置"
+    echo -e "  ${GREEN}7.${RED}  修改配置${PLAIN}"
+    echo -e "  ${GREEN}8.${PLAIN}  查看日志"
     echo " -------------"
     echo -e "  ${GREEN}9.${PLAIN}  定时重启管理"
     echo " -------------"
@@ -1073,7 +1032,7 @@ case "$1" in
         ;;
     *)
         echo " 参数错误"
-        echo " 用法: `basename $0` [menu|start|restart|stop|showInfo|showLog]"
+        echo " 用法: $(basename $0) [menu|start|restart|stop|showInfo|showLog]"
         exit 1
         ;;
 esac
