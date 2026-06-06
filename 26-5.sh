@@ -559,7 +559,26 @@ downloadFile() {
         exit 1
     fi
     
-    DOWNLOAD_URL="${V6_PROXY}https://github.com/Potterli20/trojan-go-fork/releases/download/${VERSION}/trojan-go-fork-linux-${SUFFIX}.zip"
+    # 首先获取该版本下的所有文件列表
+    API_URL="https://api.github.com/repos/Potterli20/trojan-go-fork/releases/tags/${VERSION}"
+    
+    echo -e "${BLUE}正在获取文件列表...${PLAIN}"
+    
+    # 获取匹配架构的文件名（支持 -v数字 后缀）
+    FILE_NAME=$(curl -fsSL "$API_URL" | grep -o "trojan-go-fork-linux-${SUFFIX}-v[0-9]\+\.zip" | sort -V | tail -n1)
+    
+    if [[ -z "$FILE_NAME" ]]; then
+        # 如果没有找到带 -v 后缀的，尝试找旧格式
+        FILE_NAME=$(curl -fsSL "$API_URL" | grep -o "trojan-go-fork-linux-${SUFFIX}\.zip" | head -n1)
+    fi
+    
+    if [[ -z "$FILE_NAME" ]]; then
+        echo -e "${RED}未找到匹配架构 ${SUFFIX} 的安装包${PLAIN}"
+        echo -e "${YELLOW}请检查版本 ${VERSION} 是否包含该架构的二进制文件${PLAIN}"
+        exit 1
+    fi
+    
+    DOWNLOAD_URL="${V6_PROXY}https://github.com/Potterli20/trojan-go-fork/releases/download/${VERSION}/${FILE_NAME}"
     
     echo -e "${BLUE}下载地址: ${DOWNLOAD_URL}${PLAIN}"
     
@@ -567,7 +586,7 @@ downloadFile() {
     if [[ $? -ne 0 ]]; then
         echo -e "${RED}go安装文件下载失败，请检查版本号或网络${PLAIN}"
         echo -e "${YELLOW}尝试的版本: ${VERSION}${PLAIN}"
-        echo -e "${YELLOW}尝试的架构: ${SUFFIX}${PLAIN}"
+        echo -e "${YELLOW}尝试的文件: ${FILE_NAME}${PLAIN}"
         exit 1
     fi
     
