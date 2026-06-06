@@ -95,10 +95,12 @@ statusText() {
 }
 
 getVersion() {
-    VERSION=`curl -fsSL ${V6_PROXY}https://api.github.com/repos/Potterli20/trojan-go-fork/releases | grep tag_name | sed -E 's/.*"v(.*)".*/\1/'| head -n1`
-    if [[ ${VERSION:0:1} != "v" ]];then
-        VERSION="v${VERSION}"
+    VERSION=$(curl -fsSL ${V6_PROXY}https://api.github.com/repos/Potterli20/trojan-go-fork/releases/latest | grep -o '"tag_name": "[^"]*"' | cut -d'"' -f4)
+    if [[ -z "$VERSION" ]]; then
+        echo -e "${RED}获取版本号失败，请检查网络${PLAIN}"
+        exit 1
     fi
+    echo -e "${GREEN}获取到最新版本: ${VERSION}${PLAIN}"
 }
 
 archAffix() {
@@ -110,10 +112,10 @@ archAffix() {
             echo 'amd64'
         ;;
         *armv7*|armv6l)
-            echo 'armv7'
+            echo 'arm-v7'
         ;;
         *armv8*|aarch64)
-            echo 'armv8'
+            echo 'arm64'
         ;;
         *armv6*)
             echo 'armv6'
@@ -134,10 +136,10 @@ archAffix() {
             echo 'mips-softfloat'
         ;;
         *)
+            echo 'amd64'
             return 1
         ;;
     esac
-
     return 0
 }
 
@@ -551,15 +553,27 @@ EOF
 }
 
 downloadFile() {
-    # 保持原函数不变，使用时转换
-SUFFIX=$(archAffix)
-# 将 armv7 替换为 arm-v7，armv8 替换为 arm64
-SUFFIX=$(echo "$SUFFIX" | sed 's/^armv7$/arm-v7/; s/^armv8$/arm64/')
-DOWNLOAD_URL="${V6_PROXY}https://github.com/Potterli20/trojan-go-fork/releases/download/${VERSION}/trojan-go-fork-linux-${SUFFIX}.zip"
-    wget -O /tmp/${ZIP_FILE}.zip $DOWNLOAD_URL
+    SUFFIX=$(archAffix)
+    if [[ -z "$SUFFIX" ]]; then
+        echo -e "${RED}无法获取系统架构${PLAIN}"
+        exit 1
+    fi
+    
+    DOWNLOAD_URL="${V6_PROXY}https://github.com/Potterli20/trojan-go-fork/releases/download/${VERSION}/trojan-go-fork-linux-${SUFFIX}.zip"
+    
+    echo -e "${BLUE}下载地址: ${DOWNLOAD_URL}${PLAIN}"
+    
+    wget -O /tmp/${ZIP_FILE}.zip "$DOWNLOAD_URL"
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}go安装文件下载失败，请检查版本号或网络${PLAIN}"
+        echo -e "${YELLOW}尝试的版本: ${VERSION}${PLAIN}"
+        echo -e "${YELLOW}尝试的架构: ${SUFFIX}${PLAIN}"
+        exit 1
+    fi
+    
     wget -O /tmp/html.zip https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip
     if [[ ! -f /tmp/${ZIP_FILE}.zip ]]; then
-        echo -e "{$RED} go安装文件下载失败，请检查网络或重试${PLAIN}"
+        echo -e "${RED}go安装文件下载失败，请检查网络或重试${PLAIN}"
         exit 1
     fi
 }
@@ -798,6 +812,10 @@ install() {
 
     echo " 安装go..."
     getVersion
+    if [[ -z "$VERSION" ]]; then
+        echo -e "${RED}无法获取版本号，安装失败${PLAIN}"
+        exit 1
+    fi
     downloadFile
     installTrojan
     configTrojan
