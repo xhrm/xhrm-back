@@ -551,8 +551,11 @@ EOF
 }
 
 downloadFile() {
-    SUFFIX=`archAffix`
-    DOWNLOAD_URL="${V6_PROXY}https://github.com/Potterli20/trojan-go-fork/releases/download/${VERSION}/trojan-go-fork-linux-${SUFFIX}.zip"
+    # 保持原函数不变，使用时转换
+SUFFIX=$(archAffix)
+# 将 armv7 替换为 arm-v7，armv8 替换为 arm64
+SUFFIX=$(echo "$SUFFIX" | sed 's/^armv7$/arm-v7/; s/^armv8$/arm64/')
+DOWNLOAD_URL="${V6_PROXY}https://github.com/Potterli20/trojan-go-fork/releases/download/${VERSION}/trojan-go-fork-linux-${SUFFIX}.zip"
     wget -O /tmp/${ZIP_FILE}.zip $DOWNLOAD_URL
     wget -O /tmp/html.zip https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip
     if [[ ! -f /tmp/${ZIP_FILE}.zip ]]; then
