@@ -602,7 +602,7 @@ installTrojan() {
     unzip /tmp/${ZIP_FILE}.zip  -d /tmp/${ZIP_FILE}
     rm -rf /usr/share/nginx/html/*
     unzip /tmp/html.zip  -d /usr/share/nginx/html/
-    cp /tmp/${ZIP_FILE}/trojan-go /usr/bin
+    cp /tmp/${ZIP_FILE}/trojan-go-fork /usr/bin
     cp /tmp/${ZIP_FILE}/geoip.dat /etc/trojan-go
     cp /tmp/${ZIP_FILE}/geosite.dat /etc/trojan-go
     cp /tmp/${ZIP_FILE}/example/trojan-go.service /etc/systemd/system/
