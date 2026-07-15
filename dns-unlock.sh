@@ -1,255 +1,388 @@
 #!/usr/bin/env bash
+#===============================================================================
+# Dnsmasq + SNI Proxy 完整安装脚本
+# 支持系统: CentOS 7/8/9, Debian 9/10/11/12/13
+#===============================================================================
+
+set -euo pipefail
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
-red='\033[0;31m'
-green='\033[0;32m'
-yellow='\033[0;33m'
-plain='\033[0m'
+#===============================================================================
+# 颜色定义
+#===============================================================================
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[0;33m'
+readonly PLAIN='\033[0m'
 
-[[ $EUID -ne 0 ]] && echo -e "[${red}Error${plain}] 请使用root用户来执行脚本!" && exit 1
+#===============================================================================
+# 全局变量
+#===============================================================================
+readonly DNSMASQ_VERSION="2.91"
+readonly SNIPROXY_VERSION="0.6.0"
+readonly WORK_DIR="/tmp/dnsmasq_sniproxy_install"
 
-disable_selinux(){
-    if [ -s /etc/selinux/config ] && grep 'SELINUX=enforcing' /etc/selinux/config; then
-        sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
-        setenforce 0
-    fi
+SYSTEM_TYPE=""
+PACKAGE_MANAGER=""
+SYSTEM_VERSION=""
+
+#===============================================================================
+# 日志函数
+#===============================================================================
+log_info() {
+    echo -e "[${GREEN}Info${PLAIN}] $*"
 }
 
-check_sys(){
-    local checkType=$1
-    local value=$2
-    local release=''
-    local systemPackage=''
-
-    if [[ -f /etc/redhat-release ]]; then
-        release="centos"
-        systemPackage="yum"
-    elif grep -Eqi "debian|raspbian" /etc/issue; then
-        release="debian"
-        systemPackage="apt"
-    elif grep -Eqi "ubuntu" /etc/issue; then
-        release="ubuntu"
-        systemPackage="apt"
-    elif grep -Eqi "centos|red hat|redhat" /etc/issue; then
-        release="centos"
-        systemPackage="yum"
-    elif grep -Eqi "debian|raspbian" /proc/version; then
-        release="debian"
-        systemPackage="apt"
-    elif grep -Eqi "ubuntu" /proc/version; then
-        release="ubuntu"
-        systemPackage="apt"
-    elif grep -Eqi "centos|red hat|redhat" /proc/version; then
-        release="centos"
-        systemPackage="yum"
-    fi
-
-    if [[ "${checkType}" == "sysRelease" ]]; then
-        [[ "${value}" == "${release}" ]] && return 0 || return 1
-    elif [[ "${checkType}" == "packageManager" ]]; then
-        [[ "${value}" == "${systemPackage}" ]] && return 0 || return 1
-    fi
+log_warn() {
+    echo -e "[${YELLOW}Warning${PLAIN}] $*"
 }
 
-getversion(){
-    if [[ -s /etc/redhat-release ]]; then
-        grep -oE  "[0-9.]+" /etc/redhat-release
+log_error() {
+    echo -e "[${RED}Error${PLAIN}] $*"
+    exit 1
+}
+
+#===============================================================================
+# 权限检查
+#===============================================================================
+check_root() {
+    [[ $EUID -eq 0 ]] || log_error "请使用 root 用户执行此脚本"
+}
+
+#===============================================================================
+# 系统检测
+#===============================================================================
+detect_system() {
+    log_info "检测系统环境..."
+    
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        case "${ID}" in
+            centos|rhel|rocky|almalinux)
+                SYSTEM_TYPE="centos"
+                SYSTEM_VERSION="${VERSION_ID%%.*}"
+                PACKAGE_MANAGER=$([[ "${SYSTEM_VERSION}" == "7" ]] && echo "yum" || echo "dnf")
+                ;;
+            debian|ubuntu)
+                SYSTEM_TYPE="debian"
+                SYSTEM_VERSION="${VERSION_ID%%.*}"
+                PACKAGE_MANAGER="apt"
+                ;;
+            *)
+                log_error "不支持的系统: ${ID}"
+                ;;
+        esac
     else
-        grep -oE  "[0-9.]+" /etc/issue
+        log_error "无法检测系统类型"
     fi
+    
+    log_info "系统类型: ${ID} ${VERSION_ID}, 包管理器: ${PACKAGE_MANAGER}"
 }
 
-centosversion(){
-    if check_sys sysRelease centos; then
-        local code=$1
-        local version="$(getversion)"
-        local main_ver=${version%%.*}
-        [[ "$main_ver" == "$code" ]] && return 0 || return 1
-    else
-        return 1
-    fi
-}
-
-get_ip(){
-    local IP=$( ip addr | egrep -o '[0-9]{1,3}(\.[0-9]{1,3}){3}' | egrep -v "^192\.168|^172\.1[6-9]\.|^172\.2[0-9]\.|^172\.3[0-2]\.|^10\.|^127\.|^255\.|^0\." | head -n 1 )
-    [ -z ${IP} ] && IP=$( wget -qO- -t1 -T2 ipv4.icanhazip.com )
-    [ -z ${IP} ] && IP=$( wget -qO- -t1 -T2 ipinfo.io/ip )
-    echo ${IP}
-}
-
-check_ip(){
-    local checkip=$1
-    local valid_check=$(echo $checkip|awk -F. '$1<=255&&$2<=255&&$3<=255&&$4<=255{print "yes"}')
-    if echo $checkip|grep -E "^[0-9]{1,3}(\.[0-9]{1,3}){3}$" >/dev/null; then
-        [[ ${valid_check:-no} == "yes" ]] && return 0 || { echo -e "[${red}Error${plain}] IP $checkip not available!"; return 1; }
-    else
-        echo -e "[${red}Error${plain}] IP format error!" 
-        return 1
-    fi
-}
-
-download(){
-    local filename=${1}
-    echo -e "[${green}Info${plain}] ${filename} download configuration now..."
-    wget --no-check-certificate -q -t3 -T60 -O ${1} ${2}
-    [[ $? -ne 0 ]] && { echo -e "[${red}Error${plain}] Download ${filename} failed."; exit 1; }
-}
-
-error_detect_depends(){
-    local command=$1
-    local depend=`echo "${command}" | awk '{print $4}'`
-    echo -e "[${green}Info${plain}] Starting to install package ${depend}"
-    ${command} > /dev/null 2>&1
-    [[ $? -ne 0 ]] && { echo -e "[${red}Error${plain}] Failed to install ${red}${depend}${plain}"; exit 1; }
-}
-
-config_firewall(){
-    if centosversion 6; then
-        /etc/init.d/iptables status > /dev/null 2>&1
-        if [ $? -eq 0 ]; then
-            for port in ${ports}; do
-                iptables -L -n | grep -i ${port} > /dev/null 2>&1
-                if [ $? -ne 0 ]; then
-                    iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${port} -j ACCEPT
-                    [[ ${port} == "53" ]] && iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${port} -j ACCEPT
-                fi
-            done
-            /etc/init.d/iptables save
-            /etc/init.d/iptables restart
-        else
-            echo -e "[${yellow}Warning${plain}] iptables not running, manually enable port ${ports}."
-        fi
-    else
-        systemctl status firewalld > /dev/null 2>&1
-        if [ $? -eq 0 ]; then
-            default_zone=$(firewall-cmd --get-default-zone)
-            for port in ${ports}; do
-                firewall-cmd --permanent --zone=${default_zone} --add-port=${port}/tcp
-                [[ ${port} == "53" ]] && firewall-cmd --permanent --zone=${default_zone} --add-port=${port}/udp
-                firewall-cmd --reload
-            done
-        else
-            echo -e "[${yellow}Warning${plain}] firewalld not running, manually enable port ${ports}."
+#===============================================================================
+# 禁用 SELinux (CentOS)
+#===============================================================================
+disable_selinux() {
+    if [[ "${SYSTEM_TYPE}" == "centos" ]] && [[ -f /etc/selinux/config ]]; then
+        if grep -q 'SELINUX=enforcing' /etc/selinux/config; then
+            log_info "禁用 SELinux..."
+            sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+            setenforce 0 || true
         fi
     fi
 }
 
-install_dependencies(){
-    echo "安装依赖软件..."
-    if check_sys packageManager yum; then
-        echo -e "[${green}Info${plain}] Checking the EPEL repository..."
-        [[ ! -f /etc/yum.repos.d/epel.repo ]] && yum install -y epel-release > /dev/null 2>&1
-        [[ ! -f /etc/yum.repos.d/epel.repo ]] && echo -e "[${red}Error${plain}] Install EPEL failed." && exit 1
-        [[ ! "$(command -v yum-config-manager)" ]] && yum install -y yum-utils > /dev/null 2>&1
-        [ x"$(yum repolist epel | grep -w epel | awk '{print $NF}')" != x"enabled" ] && yum-config-manager --enable epel > /dev/null 2>&1
-        if [[ ${fastmode} = "1" ]]; then
-            yum_depends=(curl gettext-devel libev-devel pcre-devel perl udns-devel)
-        else
-            yum_depends=(autoconf automake curl gettext-devel libev-devel pcre-devel perl udns-devel)
+#===============================================================================
+# 下载函数
+#===============================================================================
+download_file() {
+    local filename="$1"
+    local url="$2"
+    local max_retries=3
+    local retry=0
+    
+    log_info "下载 ${filename}..."
+    
+    while [[ $retry -lt $max_retries ]]; do
+        if wget --no-check-certificate -q --show-progress -t 3 -T 60 -O "${filename}" "${url}"; then
+            log_info "${filename} 下载完成"
+            return 0
         fi
-        for depend in ${yum_depends[@]}; do error_detect_depends "yum -y install ${depend}"; done
-        if [[ ${fastmode} = "0" ]]; then
-            centosversion 6 && { error_detect_depends "yum -y groupinstall development"; error_detect_depends "yum -y install centos-release-scl"; error_detect_depends "yum -y install devtoolset-6-gcc-c++"; } || { yum config-manager --set-enabled powertools; error_detect_depends "yum -y groupinstall development"; }
+        
+        if curl -sSL --connect-timeout 30 --max-time 300 -o "${filename}" "${url}"; then
+            log_info "${filename} 下载完成 (curl)"
+            return 0
         fi
-    elif check_sys packageManager apt; then
-        [[ ${fastmode} = "1" ]] && apt_depends=(curl gettext libev-dev libpcre3-dev libudns-dev) || apt_depends=(autotools-dev cdbs curl gettext libev-dev libpcre3-dev libudns-dev autoconf devscripts)
-        apt-get -y update
-        for depend in ${apt_depends[@]}; do error_detect_depends "apt-get -y install ${depend}"; done
-        [[ ${fastmode} = "0" ]] && error_detect_depends "apt-get -y install build-essential"
+        
+        retry=$((retry + 1))
+        [[ $retry -lt $max_retries ]] && log_warn "下载失败，第 ${retry} 次重试..." && sleep 5
+    done
+    
+    log_error "${filename} 下载失败，请检查网络连接"
+}
+
+#===============================================================================
+# 安装依赖 - CentOS
+#===============================================================================
+install_deps_centos() {
+    log_info "安装 CentOS/RHEL 依赖包..."
+    
+    # EPEL 源
+    if ! rpm -q epel-release &>/dev/null; then
+        ${PACKAGE_MANAGER} install -y epel-release || \
+        ${PACKAGE_MANAGER} install -y "https://dl.fedoraproject.org/pub/epel/epel-release-latest-${SYSTEM_VERSION}.noarch.rpm"
     fi
-}
-
-compile_dnsmasq(){
-    if check_sys packageManager yum; then
-        error_detect_depends "yum -y install epel-release make gcc-c++ nettle-devel gettext libidn-devel libnetfilter_conntrack-devel dbus-devel"
-    elif check_sys packageManager apt; then
-        error_detect_depends "apt -y install make gcc g++ pkg-config nettle-dev gettext libidn11-dev libnetfilter-conntrack-dev libdbus-1-dev"
+    
+    # 启用 powertools (CentOS 8+)
+    if [[ ${SYSTEM_VERSION} -ge 8 ]]; then
+        ${PACKAGE_MANAGER} config-manager --set-enabled powertools &>/dev/null || true
     fi
-    [[ -e /tmp/dnsmasq-2.91 ]] && rm -rf /tmp/dnsmasq-2.91
-    cd /tmp/
-    download dnsmasq-2.91.tar.gz https://thekelleys.org.uk/dnsmasq/dnsmasq-2.91.tar.gz
-    tar -zxf dnsmasq-2.91.tar.gz
-    cd dnsmasq-2.91
-    make all-i18n V=s COPTS='-DHAVE_DNSSEC -DHAVE_IDN -DHAVE_CONNTRACK -DHAVE_DBUS'
-    [[ $? -ne 0 ]] && echo -e "[${red}Error${plain}] Compile dnsmasq failed!" && exit 1
-    make install
+    
+    # 安装依赖
+    ${PACKAGE_MANAGER} install -y \
+        curl wget ca-certificates \
+        make gcc gcc-c++ pkg-config \
+        autoconf automake libtool \
+        gettext gettext-devel \
+        libev-devel pcre-devel nettle-devel \
+        libidn-devel libnetfilter_conntrack-devel dbus-devel || \
+        log_error "依赖安装失败"
+    
+    # 开发工具组
+    ${PACKAGE_MANAGER} groupinstall -y "Development Tools" &>/dev/null || \
+    ${PACKAGE_MANAGER} install -y make gcc gcc-c++ kernel-devel
+    
+    log_info "CentOS 依赖安装完成"
 }
 
-install_dnsmasq(){
-    compile_dnsmasq
-    mkdir -p /etc/dnsmasq.d
-    [[ ! -f /usr/local/sbin/dnsmasq ]] && echo -e "[${red}Error${plain}] dnsmasq not installed!" && exit 1
-    echo -e "[${green}Info${plain}] dnsmasq installed successfully!"
+#===============================================================================
+# 安装依赖 - Debian
+#===============================================================================
+install_deps_debian() {
+    log_info "安装 Debian/Ubuntu 依赖包..."
+    
+    ${PACKAGE_MANAGER} update || {
+        rm -rf /var/lib/apt/lists/*
+        ${PACKAGE_MANAGER} update
+    }
+    
+    DEBIAN_FRONTEND=noninteractive ${PACKAGE_MANAGER} install -y \
+        curl wget ca-certificates \
+        build-essential make gcc g++ pkg-config \
+        autoconf automake libtool devscripts cdbs \
+        gettext \
+        libev-dev libpcre3-dev nettle-dev \
+        libidn2-dev libnetfilter-conntrack-dev libdbus-1-dev || \
+        log_error "依赖安装失败"
+    
+    log_info "Debian 依赖安装完成"
 }
 
-install_sniproxy(){
-    install_dependencies
-    cd /tmp/
-    download sniproxy-0.6.0.tar.gz https://github.com/dlundquist/sniproxy/archive/refs/tags/v0.6.0.tar.gz
-    tar -zxf sniproxy-0.6.0.tar.gz
-    cd sniproxy-0.6.0
-    ./configure
-    make
-    make install
-    [[ ! -f /usr/local/sbin/sniproxy ]] && echo -e "[${red}Error${plain}] sniproxy not installed!" && exit 1
-    echo -e "[${green}Info${plain}] sniproxy installed successfully!"
-}
-
-undnsmasq(){
-    [[ -f /usr/local/sbin/dnsmasq ]] && rm -f /usr/local/sbin/dnsmasq
-    [[ -d /etc/dnsmasq.d ]] && rm -rf /etc/dnsmasq.d
-    echo -e "[${green}Info${plain}] dnsmasq uninstalled."
-}
-
-unsniproxy(){
-    [[ -f /usr/local/sbin/sniproxy ]] && rm -f /usr/local/sbin/sniproxy
-    echo -e "[${green}Info${plain}] sniproxy uninstalled."
-}
-
-hello(){
-    echo ""
-    echo -e "${yellow}Dnsmasq + SNI Proxy自助安装脚本${plain}"
-    echo -e "${yellow}支持系统:  CentOS 6+, Debian8+, Ubuntu16+${plain}"
-    echo ""
-}
-
-confirm(){
-    echo -e "${yellow}是否继续执行?(n:取消/y:继续)${plain}"
-    read -e -p "(默认:取消): " selection
-    [ -z "${selection}" ] && selection="n"
-    [[ ${selection} != "y" ]] && exit 0
-}
-
-menu(){
-    hello
-    echo "请选择操作:"
-    echo "1. 安装 Dnsmasq + SNI Proxy"
-    echo "2. 快速安装 Dnsmasq + SNI Proxy"
-    echo "3. 仅安装 Dnsmasq"
-    echo "4. 快速安装 Dnsmasq"
-    echo "5. 仅安装 SNI Proxy"
-    echo "6. 快速安装 SNI Proxy"
-    echo "7. 卸载 Dnsmasq + SNI Proxy"
-    echo "8. 卸载 Dnsmasq"
-    echo "9. 卸载 SNI Proxy"
-    echo "10. 重启系统"
-    echo "0. 退出"
-    read -e -p "请输入数字选择: " choice
-    case $choice in
-        1) fastmode=0; install_dnsmasq; install_sniproxy ;;
-        2) fastmode=1; install_dnsmasq; install_sniproxy ;;
-        3) fastmode=0; install_dnsmasq ;;
-        4) fastmode=1; install_dnsmasq ;;
-        5) fastmode=0; install_sniproxy ;;
-        6) fastmode=1; install_sniproxy ;;
-        7) confirm; undnsmasq; unsniproxy ;;
-        8) confirm; undnsmasq ;;
-        9) confirm; unsniproxy ;;
-        10) echo -e "${yellow}系统即将重启...${plain}"; sleep 2; reboot ;;
-        0) exit 0 ;;
-        *) echo -e "${red}无效选择${plain}"; menu ;;
+#===============================================================================
+# 安装依赖（统一入口）
+#===============================================================================
+install_dependencies() {
+    case "${SYSTEM_TYPE}" in
+        centos) install_deps_centos ;;
+        debian) install_deps_debian ;;
     esac
 }
 
-menu
+#===============================================================================
+# 配置防火墙
+#===============================================================================
+configure_firewall() {
+    local ports=("$@")
+    log_info "配置防火墙，开放端口: ${ports[*]}..."
+    
+    if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld 2>/dev/null; then
+        local zone=$(firewall-cmd --get-default-zone)
+        for port in "${ports[@]}"; do
+            firewall-cmd --permanent --zone="${zone}" --add-port="${port}/tcp" &>/dev/null
+            [[ "${port}" == "53" ]] && firewall-cmd --permanent --zone="${zone}" --add-port="${port}/udp" &>/dev/null
+        done
+        firewall-cmd --reload &>/dev/null
+    elif command -v iptables &>/dev/null; then
+        for port in "${ports[@]}"; do
+            iptables -L -n | grep -q "${port}" || {
+                iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport "${port}" -j ACCEPT
+                [[ "${port}" == "53" ]] && iptables -I INPUT -m state --state NEW -m udp -p udp --dport "${port}" -j ACCEPT
+            }
+        done
+    fi
+}
+
+#===============================================================================
+# 编译安装 Dnsmasq
+#===============================================================================
+install_dnsmasq() {
+    log_info "========================================"
+    log_info "安装 Dnsmasq ${DNSMASQ_VERSION}"
+    log_info "========================================"
+    
+    cd "${WORK_DIR}"
+    download_file "dnsmasq-${DNSMASQ_VERSION}.tar.gz" \
+        "https://thekelleys.org.uk/dnsmasq/dnsmasq-${DNSMASQ_VERSION}.tar.gz"
+    
+    tar -zxf "dnsmasq-${DNSMASQ_VERSION}.tar.gz"
+    cd "dnsmasq-${DNSMASQ_VERSION}"
+    
+    log_info "编译 Dnsmasq..."
+    make all-i18n V=s COPTS='-DHAVE_DNSSEC -DHAVE_IDN -DHAVE_CONNTRACK -DHAVE_DBUS' -j"$(nproc)"
+    make install
+    
+    mkdir -p /etc/dnsmasq.d
+    
+    # 验证
+    if command -v dnsmasq &>/dev/null; then
+        log_info "Dnsmasq 安装成功: $(dnsmasq --version 2>/dev/null | head -1)"
+    else
+        log_error "Dnsmasq 安装验证失败"
+    fi
+}
+
+#===============================================================================
+# 编译安装 SNI Proxy
+#===============================================================================
+install_sniproxy() {
+    log_info "========================================"
+    log_info "安装 SNI Proxy ${SNIPROXY_VERSION}"
+    log_info "========================================"
+    
+    cd "${WORK_DIR}"
+    
+    # 尝试多个下载地址
+    local downloaded=false
+    for url in \
+        "https://github.com/dlundquist/sniproxy/archive/v${SNIPROXY_VERSION}.tar.gz" \
+        "https://github.com/dlundquist/sniproxy/archive/refs/tags/v${SNIPROXY_VERSION}.tar.gz" \
+        "https://codeload.github.com/dlundquist/sniproxy/tar.gz/v${SNIPROXY_VERSION}"; do
+        
+        if download_file "sniproxy-${SNIPROXY_VERSION}.tar.gz" "${url}"; then
+            downloaded=true
+            break
+        fi
+    done
+    
+    [[ "${downloaded}" == "false" ]] && log_error "SNI Proxy 下载失败"
+    
+    tar -zxf "sniproxy-${SNIPROXY_VERSION}.tar.gz"
+    cd sniproxy-*
+    
+    log_info "配置并编译 SNI Proxy..."
+    ./configure
+    make -j"$(nproc)"
+    make install
+    
+    if command -v sniproxy &>/dev/null; then
+        log_info "SNI Proxy 安装成功"
+    else
+        log_error "SNI Proxy 安装验证失败"
+    fi
+}
+
+#===============================================================================
+# 创建 systemd 服务
+#===============================================================================
+create_services() {
+    log_info "创建 systemd 服务..."
+    
+    # Dnsmasq 服务
+    cat > /etc/systemd/system/dnsmasq.service << 'EOF'
+[Unit]
+Description=Dnsmasq - DNS forwarder and DHCP server
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/sbin/dnsmasq
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    # SNI Proxy 服务
+    cat > /etc/systemd/system/sniproxy.service << 'EOF'
+[Unit]
+Description=SNI Proxy - Transparent TLS proxy
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/sbin/sniproxy
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    systemctl daemon-reload
+}
+
+#===============================================================================
+# 清理临时文件
+#===============================================================================
+cleanup() {
+    log_info "清理临时文件..."
+    rm -rf "${WORK_DIR}"
+}
+
+#===============================================================================
+# 显示完成信息
+#===============================================================================
+show_result() {
+    echo ""
+    echo "========================================"
+    echo -e "  ${GREEN}安装完成！${PLAIN}"
+    echo "========================================"
+    echo ""
+    echo -e "Dnsmasq:  ${GREEN}$(which dnsmasq)${PLAIN}"
+    echo -e "SNI Proxy: ${GREEN}$(which sniproxy)${PLAIN}"
+    echo ""
+    echo -e "${YELLOW}配置文件:${PLAIN}"
+    echo "  Dnsmasq:  /etc/dnsmasq.d/"
+    echo "  SNI Proxy: 需自行创建配置文件"
+    echo ""
+    echo -e "${YELLOW}管理命令:${PLAIN}"
+    echo "  systemctl start dnsmasq      # 启动 Dnsmasq"
+    echo "  systemctl start sniproxy     # 启动 SNI Proxy"
+    echo "  systemctl enable dnsmasq     # 开机自启"
+    echo "  systemctl enable sniproxy    # 开机自启"
+    echo "  systemctl status dnsmasq     # 查看状态"
+    echo "  systemctl status sniproxy    # 查看状态"
+    echo ""
+}
+
+#===============================================================================
+# 主流程
+#===============================================================================
+main() {
+    echo ""
+    echo "========================================"
+    echo "  Dnsmasq + SNI Proxy 自动安装脚本"
+    echo "  支持: CentOS 7+ / Debian 9+"
+    echo "========================================"
+    echo ""
+    
+    check_root
+    detect_system
+    disable_selinux
+    
+    mkdir -p "${WORK_DIR}"
+    
+    install_dependencies
+    install_dnsmasq
+    install_sniproxy
+    create_services
+    configure_firewall 53 80 443 8080 8443
+    cleanup
+    
+    show_result
+}
+
+main "$@"
