@@ -199,8 +199,6 @@ show_status(){
     echo -e "${BLUE}==============================${NC}"
     echo -e "${BLUE}       TCP 中转当前状态       ${NC}"
     echo -e "${BLUE}==============================${NC}"
-    echo -e "系统: ${GREEN}$(. /etc/os-release && echo $PRETTY_NAME)${NC}"
-    echo -e "内核: ${GREEN}$(uname -r)${NC}"
     
     if systemctl is-active --quiet nginx; then
         echo -e "Nginx: ${GREEN}运行中${NC}"
