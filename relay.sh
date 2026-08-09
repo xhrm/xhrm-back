@@ -3,18 +3,20 @@
 CONFIG="/etc/nginx/stream.d/forward.conf"
 NGINX_CONF="/etc/nginx/nginx.conf"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+RED="\033[31m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+BLUE="\033[34m"
+NC="\033[0m"
 
 
 check_root(){
-    if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}请使用 root 运行${NC}"
+
+    if [ "$EUID" != "0" ]; then
+        echo -e "${RED}请使用root运行${NC}"
         exit 1
     fi
+
 }
 
 
@@ -24,14 +26,14 @@ detect_system(){
         . /etc/os-release
         OS=$ID
     else
-        echo -e "${RED}无法识别系统${NC}"
+        echo "无法识别系统"
         exit 1
     fi
 
 
     case "$OS" in
 
-        centos|rhel|rocky|almalinux)
+        centos|rhel|rocky|almalinux|fedora)
             PM="yum"
             ;;
 
@@ -40,21 +42,12 @@ detect_system(){
             ;;
 
         *)
-            echo -e "${RED}不支持系统:$OS${NC}"
+            echo "不支持系统:$OS"
             exit 1
             ;;
 
     esac
-}
 
-
-check_stream(){
-
-    if nginx -V 2>&1 | grep -q -- "--with-stream"; then
-        return 0
-    fi
-
-    return 1
 }
 
 
@@ -62,28 +55,26 @@ check_stream(){
 install_nginx(){
 
 
-echo -e "${BLUE}安装 nginx...${NC}"
+echo -e "${BLUE}检查 nginx...${NC}"
 
 
-if command -v nginx >/dev/null; then
+if command -v nginx >/dev/null 2>&1; then
 
-    if check_stream; then
+    echo -e "${GREEN}检测到 nginx${NC}"
 
-        echo -e "${GREEN}已有 nginx stream 模块${NC}"
-        return
-
-    fi
-
-fi
+else
 
 
+    echo -e "${BLUE}安装 nginx${NC}"
 
-case "$PM" in
+
+    case "$PM" in
 
 
-yum)
+    yum)
 
-cat >/etc/yum.repos.d/nginx.repo <<EOF
+
+        cat >/etc/yum.repos.d/nginx.repo <<EOF
 [nginx-stable]
 name=nginx stable repo
 baseurl=http://nginx.org/packages/centos/\$releasever/\$basearch/
@@ -93,72 +84,159 @@ gpgkey=https://nginx.org/keys/nginx_signing.key
 EOF
 
 
-yum install -y nginx
-
-;;
+        yum install -y nginx
 
 
-
-apt)
-
-
-apt update
-
-apt install -y nginx
-
-
-;;
-
-esac
-
-
-
-if ! check_stream; then
-
-    echo -e "${YELLOW}当前 nginx 无 stream 模块，安装扩展${NC}"
-
-
-    case "$PM" in
-
-    yum)
-        yum install -y nginx-mod-stream
         ;;
+
 
     apt)
 
-        apt install -y nginx-extras || apt install -y nginx-full
+        apt update
+
+        apt install -y nginx
+
 
         ;;
 
     esac
 
+
+fi
+
+
+}
+
+
+
+install_stream_module(){
+
+
+echo -e "${BLUE}检查stream模块${NC}"
+
+
+# 静态模块
+
+if nginx -V 2>&1 | grep -q -- "--with-stream"; then
+
+    echo -e "${GREEN}stream静态模块存在${NC}"
+    return
+
 fi
 
 
 
-if ! check_stream; then
+# 动态模块文件
 
-    echo -e "${RED}nginx stream 模块安装失败${NC}"
+MODULE=""
+
+
+
+for f in \
+/usr/lib/nginx/modules/ngx_stream_module.so \
+/usr/lib64/nginx/modules/ngx_stream_module.so
+
+do
+
+    if [ -f "$f" ]; then
+        MODULE="$f"
+        break
+    fi
+
+done
+
+
+
+if [ -z "$MODULE" ]; then
+
+
+    echo -e "${YELLOW}安装stream模块${NC}"
+
+
+    case "$PM" in
+
+
+    apt)
+
+        apt update
+
+        apt install -y libnginx-mod-stream
+
+
+        ;;
+
+
+    yum)
+
+        yum install -y nginx-mod-stream
+
+
+        ;;
+
+
+    esac
+
+
+
+    for f in \
+    /usr/lib/nginx/modules/ngx_stream_module.so \
+    /usr/lib64/nginx/modules/ngx_stream_module.so
+
+    do
+
+        if [ -f "$f" ]; then
+            MODULE="$f"
+            break
+        fi
+
+    done
+
+
+fi
+
+
+
+if [ -z "$MODULE" ]; then
+
+    echo -e "${RED}未找到stream模块${NC}"
     nginx -V
     exit 1
 
 fi
 
 
-echo -e "${GREEN}nginx stream 模块正常${NC}"
+
+# 动态模块加载
+
+if ! nginx -T 2>/dev/null | grep -q ngx_stream_module.so; then
+
+
+    echo -e "${BLUE}加载stream动态模块${NC}"
+
+
+    sed -i "1iload_module modules/ngx_stream_module.so;" \
+    "$NGINX_CONF"
+
+
+fi
+
+
+
+echo -e "${GREEN}stream模块正常${NC}"
+
 
 }
 
 
 
-config_stream(){
+config_nginx(){
 
 
 mkdir -p /etc/nginx/stream.d
 
 
 
-if ! grep -q "stream.d/\*.conf" "$NGINX_CONF"; then
+if ! grep -q "stream.d/*.conf" "$NGINX_CONF"; then
 
 
 cat >> "$NGINX_CONF" <<EOF
@@ -186,10 +264,11 @@ set_forward(){
 read -p "请输入目标服务器IP: " IP
 
 
-if ! [[ $IP =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+
+if ! [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
 
     echo -e "${RED}IP格式错误${NC}"
-    exit 1
+    return
 
 fi
 
@@ -211,9 +290,11 @@ server {
 
     proxy_pass backend;
 
+
     proxy_connect_timeout 10s;
 
     proxy_timeout 1h;
+
 
     proxy_socket_keepalive on;
 
@@ -223,9 +304,7 @@ EOF
 
 
 
-echo
-
-echo -e "${BLUE}检测 nginx 配置...${NC}"
+echo -e "${BLUE}测试nginx配置${NC}"
 
 
 if nginx -t; then
@@ -233,26 +312,21 @@ if nginx -t; then
 
     systemctl enable nginx >/dev/null 2>&1
 
+
     systemctl restart nginx
 
 
-    if systemctl is-active nginx >/dev/null; then
-
-        echo
-        echo -e "${GREEN}部署成功${NC}"
-        echo -e "转发目标: ${IP}:443"
-
-    else
-
-        echo -e "${RED}nginx启动失败${NC}"
-
-    fi
+    echo
+    echo -e "${GREEN}部署成功${NC}"
+    echo "TCP443 ---> ${IP}:443"
 
 
 else
 
-    echo -e "${RED}nginx配置错误${NC}"
-    exit 1
+
+    echo -e "${RED}nginx配置失败${NC}"
+
+    nginx -t
 
 fi
 
@@ -266,18 +340,20 @@ status(){
 
 echo
 
-echo "========== Nginx TCP转发状态 =========="
+echo "==========状态=========="
 
 
-if systemctl is-active nginx >/dev/null; then
 
-echo -e "Nginx: ${GREEN}运行中${NC}"
+if systemctl is-active nginx >/dev/null 2>&1; then
+
+echo -e "nginx:${GREEN}运行${NC}"
 
 else
 
-echo -e "Nginx: ${RED}停止${NC}"
+echo -e "nginx:${RED}停止${NC}"
 
 fi
+
 
 
 if [ -f "$CONFIG" ]; then
@@ -287,7 +363,7 @@ grep "server .*:443" "$CONFIG"
 fi
 
 
-echo "======================================"
+echo "========================"
 
 }
 
@@ -302,21 +378,26 @@ detect_system
 
 install_nginx
 
-config_stream
+install_stream_module
+
+config_nginx
+
 
 
 while true
+
 do
 
 echo
-echo "1. 设置转发目标"
-echo "2. 查看状态"
-echo "0. 退出"
-
-read -p "请选择: " C
+echo "1.设置转发"
+echo "2.查看状态"
+echo "0.退出"
 
 
-case "$C" in
+read -p "请选择:" CH
+
+
+case "$CH" in
 
 1)
 set_forward
@@ -331,7 +412,7 @@ exit
 ;;
 
 *)
-echo "错误"
+echo "输入错误"
 
 ;;
 
@@ -342,6 +423,7 @@ done
 
 
 }
+
 
 
 main
