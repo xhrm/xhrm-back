@@ -29,7 +29,7 @@ detect_system(){
     fi
 
 
-    . /etc/os-release
+    source /etc/os-release
 
 
     OS=$ID
@@ -51,7 +51,7 @@ detect_system(){
 
         *)
 
-            echo "不支持系统:$OS"
+            echo "不支持系统: $OS"
             exit 1
             ;;
 
@@ -78,6 +78,7 @@ fi
 echo -e "${BLUE}安装nginx${NC}"
 
 
+
 case "$PM" in
 
 
@@ -87,13 +88,11 @@ apt)
 
     apt install -y nginx
 
-
 ;;
 
 
 
 yum)
-
 
 cat >/etc/yum.repos.d/nginx.repo <<EOF
 [nginx-stable]
@@ -121,7 +120,7 @@ esac
 install_stream(){
 
 
-echo -e "${BLUE}检测stream模块${NC}"
+echo -e "${BLUE}检查stream模块${NC}"
 
 
 
@@ -130,32 +129,28 @@ echo -e "${BLUE}检测stream模块${NC}"
 if [ "$PM" = "apt" ]; then
 
 
-    if [ -f /etc/nginx/modules-enabled/50-mod-stream.conf ]; then
+    if [ ! -f /etc/nginx/modules-enabled/50-mod-stream.conf ]; then
 
-        echo -e "${GREEN}Debian stream模块已启用${NC}"
 
-        return
+        echo -e "${YELLOW}安装stream模块${NC}"
+
+
+        apt update
+
+        apt install -y libnginx-mod-stream
+
 
     fi
 
 
 
-    apt install -y libnginx-mod-stream
-
-
-    if [ -d /etc/nginx/modules-enabled ]; then
-
-        ln -sf \
-        /usr/share/nginx/modules-available/mod-stream.conf \
-        /etc/nginx/modules-enabled/50-mod-stream.conf 2>/dev/null
-
-    fi
-
+    echo -e "${GREEN}Debian stream正常${NC}"
 
     return
 
 
 fi
+
 
 
 
@@ -164,58 +159,54 @@ fi
 
 if nginx -V 2>&1 | grep -q -- "--with-stream"; then
 
-    echo -e "${GREEN}nginx已包含stream${NC}"
+
+    echo -e "${GREEN}nginx内置stream${NC}"
 
     return
 
+
 fi
+
 
 
 
 MODULE=""
 
 
-for f in \
 
-/usr/lib64/nginx/modules/ngx_stream_module.so \
-/usr/lib/nginx/modules/ngx_stream_module.so
+if [ -f /usr/lib64/nginx/modules/ngx_stream_module.so ]; then
 
-do
+    MODULE="/usr/lib64/nginx/modules/ngx_stream_module.so"
 
-    if [ -f "$f" ]; then
+fi
 
-        MODULE="$f"
-        break
 
-    fi
 
-done
+if [ -z "$MODULE" ] && [ -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+
+    MODULE="/usr/lib/nginx/modules/ngx_stream_module.so"
+
+fi
+
 
 
 
 if [ -z "$MODULE" ]; then
 
+
     yum install -y nginx-mod-stream
 
 
-    for f in \
 
-    /usr/lib64/nginx/modules/ngx_stream_module.so \
-    /usr/lib/nginx/modules/ngx_stream_module.so
+    if [ -f /usr/lib64/nginx/modules/ngx_stream_module.so ]; then
 
-    do
+        MODULE="/usr/lib64/nginx/modules/ngx_stream_module.so"
 
-        if [ -f "$f" ]; then
-
-            MODULE="$f"
-            break
-
-        fi
-
-    done
+    fi
 
 
 fi
+
 
 
 
@@ -229,7 +220,6 @@ fi
 
 
 
-# CentOS手动加载
 
 if ! grep -q "ngx_stream_module.so" "$NGINX_CONF"; then
 
@@ -238,12 +228,15 @@ if ! grep -q "ngx_stream_module.so" "$NGINX_CONF"; then
 
 
     sed -i \
-    "1iload_module modules/ngx_stream_module.so;" \
+    '1iload_module modules/ngx_stream_module.so;' \
     "$NGINX_CONF"
 
 
 fi
 
+
+
+echo -e "${GREEN}CentOS stream正常${NC}"
 
 
 }
@@ -257,9 +250,7 @@ mkdir -p /etc/nginx/stream.d
 
 
 
-# 防止重复添加
-
-if ! grep -q "stream.d" "$NGINX_CONF"; then
+if ! grep -q "include /etc/nginx/stream.d/*.conf" "$NGINX_CONF"; then
 
 
 cat >> "$NGINX_CONF" <<EOF
@@ -287,6 +278,7 @@ set_forward(){
 read -p "请输入Trojan服务器IP: " IP
 
 
+
 if ! [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
 
     echo -e "${RED}IP格式错误${NC}"
@@ -301,9 +293,7 @@ cat > "${CONFIG}.tmp" <<EOF
 
 upstream trojan_backend {
 
-
     server ${IP}:443;
-
 
 }
 
@@ -311,25 +301,19 @@ upstream trojan_backend {
 
 server {
 
-
     listen 443 reuseport fastopen=1024;
-
 
 
     proxy_pass trojan_backend;
 
 
-
     proxy_connect_timeout 10s;
-
 
 
     proxy_timeout 24h;
 
 
-
     proxy_socket_keepalive on;
-
 
 }
 
@@ -341,7 +325,8 @@ mv "${CONFIG}.tmp" "$CONFIG"
 
 
 
-echo -e "${BLUE}测试nginx配置${NC}"
+echo -e "${BLUE}测试配置${NC}"
+
 
 
 if nginx -t; then
@@ -359,7 +344,7 @@ if nginx -t; then
 
         echo
 
-        echo -e "${GREEN}Trojan中转部署成功${NC}"
+        echo -e "${GREEN}部署成功${NC}"
 
         echo "本机443 ---> ${IP}:443"
 
@@ -382,6 +367,7 @@ else
 fi
 
 
+
 }
 
 
@@ -391,7 +377,7 @@ show_status(){
 
 echo
 
-echo "========== Trojan TCP中转 =========="
+echo "==========状态=========="
 
 
 
@@ -409,15 +395,19 @@ fi
 
 if [ -f "$CONFIG" ]; then
 
-    echo "目标:"
+    echo "转发目标:"
+
     grep "server .*:443" "$CONFIG"
 
 fi
 
 
-echo "==================================="
+
+echo "========================"
+
 
 }
+
 
 
 
@@ -450,11 +440,11 @@ echo "2. 查看状态"
 echo "0. 退出"
 
 
-read -p "请选择: " C
+read -p "请选择: " CH
 
 
 
-case "$C" in
+case "$CH" in
 
 
 1)
