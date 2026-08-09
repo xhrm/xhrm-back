@@ -12,7 +12,7 @@ CONFIG_FILE="/etc/fix_dns_current.conf"
 
 # 默认 DNS
 DEFAULT_DNS1="8.8.8.8"
-DEFAULT_DNS2="1.1.1.8"
+DEFAULT_DNS2="1.1.1.1"
 
 # 验证 IP 地址格式
 validate_ip() {
