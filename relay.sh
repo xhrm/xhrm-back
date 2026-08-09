@@ -1,6 +1,6 @@
 #!/bin/bash
 
-CONFIG="/etc/nginx/stream.d/forward.conf"
+CONFIG="/etc/nginx/stream.d/trojan.conf"
 NGINX_CONF="/etc/nginx/nginx.conf"
 
 RED="\033[31m"
@@ -12,7 +12,7 @@ NC="\033[0m"
 
 check_root(){
 
-    if [ "$EUID" != "0" ]; then
+    if [ "$EUID" -ne 0 ]; then
         echo -e "${RED}请使用root运行${NC}"
         exit 1
     fi
@@ -42,7 +42,7 @@ detect_system(){
             ;;
 
         *)
-            echo "不支持系统:$OS"
+            echo "不支持系统: $OS"
             exit 1
             ;;
 
@@ -54,15 +54,13 @@ detect_system(){
 
 install_nginx(){
 
+    if command -v nginx >/dev/null 2>&1; then
 
-echo -e "${BLUE}检查 nginx...${NC}"
+        echo -e "${GREEN}检测到 nginx${NC}"
+        return
 
+    fi
 
-if command -v nginx >/dev/null 2>&1; then
-
-    echo -e "${GREEN}检测到 nginx${NC}"
-
-else
 
 
     echo -e "${BLUE}安装 nginx${NC}"
@@ -71,8 +69,17 @@ else
     case "$PM" in
 
 
-    yum)
+    apt)
 
+        apt update
+
+        apt install -y nginx
+
+
+        ;;
+
+
+    yum)
 
         cat >/etc/yum.repos.d/nginx.repo <<EOF
 [nginx-stable]
@@ -86,61 +93,46 @@ EOF
 
         yum install -y nginx
 
-
         ;;
 
-
-    apt)
-
-        apt update
-
-        apt install -y nginx
-
-
-        ;;
 
     esac
-
-
-fi
 
 
 }
 
 
 
-install_stream_module(){
+install_stream(){
 
 
-echo -e "${BLUE}检查stream模块${NC}"
+echo -e "${BLUE}检查 nginx stream 模块${NC}"
 
 
-# 静态模块
+# 已编译模块
 
-if nginx -V 2>&1 | grep -q -- "--with-stream"; then
+if nginx -V 2>&1 | grep -q "stream"; then
 
-    echo -e "${GREEN}stream静态模块存在${NC}"
-    return
+    echo -e "${GREEN}stream编译支持${NC}"
 
 fi
 
 
 
-# 动态模块文件
-
 MODULE=""
 
 
-
-for f in \
+for m in \
 /usr/lib/nginx/modules/ngx_stream_module.so \
 /usr/lib64/nginx/modules/ngx_stream_module.so
 
 do
 
-    if [ -f "$f" ]; then
-        MODULE="$f"
+    if [ -f "$m" ]; then
+
+        MODULE="$m"
         break
+
     fi
 
 done
@@ -178,15 +170,17 @@ if [ -z "$MODULE" ]; then
 
 
 
-    for f in \
+    for m in \
     /usr/lib/nginx/modules/ngx_stream_module.so \
     /usr/lib64/nginx/modules/ngx_stream_module.so
 
     do
 
-        if [ -f "$f" ]; then
-            MODULE="$f"
+        if [ -f "$m" ]; then
+
+            MODULE="$m"
             break
+
         fi
 
     done
@@ -198,7 +192,7 @@ fi
 
 if [ -z "$MODULE" ]; then
 
-    echo -e "${RED}未找到stream模块${NC}"
+    echo -e "${RED}找不到stream模块${NC}"
     nginx -V
     exit 1
 
@@ -206,12 +200,12 @@ fi
 
 
 
-# 动态模块加载
+# 加载动态模块
 
-if ! nginx -T 2>/dev/null | grep -q ngx_stream_module.so; then
+if ! grep -q "ngx_stream_module.so" "$NGINX_CONF"; then
 
 
-    echo -e "${BLUE}加载stream动态模块${NC}"
+    echo -e "${BLUE}加载stream模块${NC}"
 
 
     sed -i "1iload_module modules/ngx_stream_module.so;" \
@@ -221,7 +215,6 @@ if ! nginx -T 2>/dev/null | grep -q ngx_stream_module.so; then
 fi
 
 
-
 echo -e "${GREEN}stream模块正常${NC}"
 
 
@@ -229,14 +222,14 @@ echo -e "${GREEN}stream模块正常${NC}"
 
 
 
-config_nginx(){
+add_stream_conf(){
 
 
 mkdir -p /etc/nginx/stream.d
 
 
 
-if ! grep -q "stream.d/*.conf" "$NGINX_CONF"; then
+if ! grep -q "/etc/nginx/stream.d" "$NGINX_CONF"; then
 
 
 cat >> "$NGINX_CONF" <<EOF
@@ -258,11 +251,10 @@ fi
 
 
 
-set_forward(){
+set_trojan_forward(){
 
 
-read -p "请输入目标服务器IP: " IP
-
+read -p "请输入Trojan服务器IP: " IP
 
 
 if ! [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
@@ -274,29 +266,34 @@ fi
 
 
 
-cat > "$CONFIG" <<EOF
+cat > "${CONFIG}.tmp" <<EOF
 
-upstream backend {
+upstream trojan_backend {
+
 
     server ${IP}:443;
+
 
 }
 
 
 server {
 
-    listen 443 reuseport;
+
+    listen 443 reuseport fastopen=1024;
 
 
-    proxy_pass backend;
+    proxy_pass trojan_backend;
 
 
     proxy_connect_timeout 10s;
 
-    proxy_timeout 1h;
+
+    proxy_timeout 24h;
 
 
     proxy_socket_keepalive on;
+
 
 }
 
@@ -304,7 +301,11 @@ EOF
 
 
 
-echo -e "${BLUE}测试nginx配置${NC}"
+mv "${CONFIG}.tmp" "$CONFIG"
+
+
+
+echo -e "${BLUE}检测nginx配置${NC}"
 
 
 if nginx -t; then
@@ -312,45 +313,58 @@ if nginx -t; then
 
     systemctl enable nginx >/dev/null 2>&1
 
-
     systemctl restart nginx
 
 
-    echo
-    echo -e "${GREEN}部署成功${NC}"
-    echo "TCP443 ---> ${IP}:443"
+
+    if systemctl is-active nginx >/dev/null 2>&1; then
+
+
+        echo
+        echo -e "${GREEN}Trojan中转部署成功${NC}"
+        echo "本机443 ---> ${IP}:443"
+
+
+    else
+
+        echo -e "${RED}nginx启动失败${NC}"
+
+    fi
+
 
 
 else
 
 
-    echo -e "${RED}nginx配置失败${NC}"
+    echo -e "${RED}配置错误，未启动${NC}"
 
     nginx -t
 
+
 fi
+
 
 
 }
 
 
 
-status(){
+show_status(){
 
 
 echo
 
-echo "==========状态=========="
+echo "========== Trojan中转状态 =========="
 
 
 
 if systemctl is-active nginx >/dev/null 2>&1; then
 
-echo -e "nginx:${GREEN}运行${NC}"
+echo -e "nginx: ${GREEN}运行${NC}"
 
 else
 
-echo -e "nginx:${RED}停止${NC}"
+echo -e "nginx: ${RED}停止${NC}"
 
 fi
 
@@ -358,12 +372,13 @@ fi
 
 if [ -f "$CONFIG" ]; then
 
+echo "目标:"
 grep "server .*:443" "$CONFIG"
 
 fi
 
 
-echo "========================"
+echo "================================="
 
 }
 
@@ -378,9 +393,9 @@ detect_system
 
 install_nginx
 
-install_stream_module
+install_stream
 
-config_nginx
+add_stream_conf
 
 
 
@@ -389,30 +404,37 @@ while true
 do
 
 echo
-echo "1.设置转发"
+
+echo "1.设置Trojan转发"
+
 echo "2.查看状态"
+
 echo "0.退出"
 
 
-read -p "请选择:" CH
+read -p "请选择: " C
 
 
-case "$CH" in
+case "$C" in
+
 
 1)
-set_forward
+set_trojan_forward
 ;;
 
+
 2)
-status
+show_status
 ;;
+
 
 0)
 exit
 ;;
 
+
 *)
-echo "输入错误"
+echo "错误"
 
 ;;
 
