@@ -284,16 +284,14 @@ set_ip(){
         fi
     done
     
+    # 修复后的 stream 配置 - 移除 upstream 块中不支持的 keepalive 指令
     cat > $CONFIG <<EOF
 upstream backend {
     server ${TARGET_IP}:443 max_fails=3 fail_timeout=10s;
-    keepalive 64;
-    keepalive_requests 1000;
-    keepalive_timeout 60s;
 }
 
 server {
-    listen 443 reuseport fastopen=256;
+    listen 443 reuseport;
     proxy_pass backend;
     proxy_connect_timeout 5s;
     proxy_timeout 1h;
@@ -338,7 +336,7 @@ show_status(){
     fi
     
     if [ -f "$CONFIG" ]; then
-        BACKEND_INFO=$(grep -A 10 "upstream backend" $CONFIG | grep "^\s*server" | head -1 | awk '{print $2}' | tr -d ';')
+        BACKEND_INFO=$(grep "^\s*server" $CONFIG | head -1 | awk '{print $2}' | tr -d ';')
         if [ -n "$BACKEND_INFO" ]; then
             echo -e "中转目标: ${GREEN}${BACKEND_INFO}${NC}"
             
