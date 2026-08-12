@@ -42,6 +42,7 @@ detect_system(){
 install_nginx(){
     if command -v nginx >/dev/null 2>&1; then
         echo -e "${GREEN}nginx已安装${NC}"
+        systemctl enable nginx >/dev/null 2>&1
         return
     fi
 
@@ -64,6 +65,9 @@ EOF
             yum install -y nginx
             ;;
     esac
+
+    systemctl enable nginx >/dev/null 2>&1
+    echo -e "${GREEN}nginx已设置为开机自启动${NC}"
 }
 
 install_stream(){
@@ -161,6 +165,7 @@ EOF
             echo
             echo -e "${GREEN}部署成功${NC}"
             echo "本机443 ---> ${IP}:443"
+            echo -e "${GREEN}已设置开机自启动，VPS重启后自动运行${NC}"
         else
             echo -e "${RED}nginx启动失败${NC}"
         fi
@@ -180,9 +185,35 @@ show_status(){
         echo -e "nginx: ${RED}停止${NC}"
     fi
 
+    if systemctl is-enabled nginx >/dev/null 2>&1; then
+        echo -e "开机自启动: ${GREEN}已启用${NC}"
+    else
+        echo -e "开机自启动: ${RED}未启用${NC}"
+    fi
+
     if [ -f "$CONFIG" ]; then
         echo "转发目标:"
-        grep "server .*:443" "$CONFIG"
+        TARGET_IP=$(grep "server .*:443" "$CONFIG" | awk '{print $2}' | cut -d: -f1)
+        echo "  目标IP: $TARGET_IP:443"
+        
+        # 检查端口监听状态
+        if ss -tlnp | grep -q ":443 "; then
+            echo -e "端口监听: ${GREEN}443端口正在监听${NC}"
+        else
+            echo -e "端口监听: ${RED}443端口未监听${NC}"
+        fi
+        
+        # 测试目标服务器连通性
+        if [ -n "$TARGET_IP" ]; then
+            echo "连接测试:"
+            if timeout 5 bash -c "echo >/dev/tcp/$TARGET_IP/443" 2>/dev/null; then
+                echo -e "  目标服务器: ${GREEN}连接成功${NC}"
+            else
+                echo -e "  目标服务器: ${RED}连接失败${NC}"
+            fi
+        fi
+    else
+        echo -e "转发配置: ${RED}未设置${NC}"
     fi
 
     echo "========================"
