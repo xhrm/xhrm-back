@@ -6,7 +6,12 @@ RED="\033[31m"      # Error message
 GREEN="\033[32m"    # Success message
 YELLOW="\033[33m"   # Warning message
 BLUE="\033[36m"     # Info message
+BOLD="\033[1m"      # 标题加粗
 PLAIN='\033[0m'
+
+# 界面分隔线（终端需支持 UTF-8，SSH 客户端开 UTF-8 即可）
+BAR_LINE="════════════════════════════════════════════════"
+DIV_LINE="────────────────────────────────────────────────"
 
 # ---------- 可自定义项 ----------
 ZIP_FILE="trojan-go"
@@ -181,15 +186,15 @@ bbrEnabled() {
     [[ "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" = "bbr" ]]
 }
 
-# 显示 BBR 状态（菜单和配置信息里都用它）
-showBBR() {
+# BBR 状态文本（已开启带绿灯，未开启带红灯）；调用方自己加标签
+bbrText() {
     local cc qdisc
     cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)
     qdisc=$(cat /proc/sys/net/core/default_qdisc 2>/dev/null)
     if [[ "$cc" = "bbr" ]]; then
-        echo -e " BBR：${GREEN}已开启${PLAIN}（拥塞控制 bbr，队列 ${qdisc:-未知}）"
+        echo "${GREEN}已开启${PLAIN}（拥塞控制 bbr，队列 ${qdisc:-未知}）"
     else
-        echo -e " BBR：${RED}未开启${PLAIN}（当前拥塞控制 ${cc:-未知}）"
+        echo "${RED}未开启${PLAIN}（当前拥塞控制 ${cc:-未知}）"
     fi
 }
 
@@ -1412,49 +1417,56 @@ showInfo() {
         echo -e "   websocket：${RED}true${PLAIN}"
         echo -e "   ws路径(ws path)：${RED}${WSPATH}${PLAIN}"
     fi
-    showBBR
+    echo -e "   BBR：$(bbrText)"
     echo ""
 }
 
 showCronStatus() {
     local status=$(getAutoRestartStatus)
     echo ""
-    echo -e "${BLUE}========== 定时任务状态 ==========${PLAIN}"
+    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
+    echo -e "   ${BOLD}定时任务状态${PLAIN}"
+    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
     if [[ "$status" = "enabled" ]]; then
-        echo -e "  trojan-go服务定时重启: ${GREEN}已启用${PLAIN}"
-        echo -e "  执行时间: 每天 ${CURRENT_RESTART_TIME}"
-        echo -e "  执行动作: 清理日志文件并重启 trojan-go 服务"
+        echo -e "  ${BLUE}定时重启${PLAIN} │ ${GREEN}已启用${PLAIN}"
+        echo -e "  ${BLUE}执行时间${PLAIN} │ 每天 ${CURRENT_RESTART_TIME}"
+        echo -e "  ${BLUE}执行动作${PLAIN} │ 清理日志文件并重启 trojan-go 服务"
     else
-        echo -e "  trojan-go服务定时重启: ${RED}已禁用${PLAIN}"
+        echo -e "  ${BLUE}定时重启${PLAIN} │ ${RED}已禁用${PLAIN}"
     fi
-    echo -e "${BLUE}==================================${PLAIN}"
+    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
     echo ""
 }
 
 menu() {
     clear
     local cur_domain
-    echo -e "  ${RED}GO install${PLAIN}"
-    echo -n " 当前状态："
+
+    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
+    echo -e "   ${BOLD}${RED}GO 一键脚本${PLAIN} ${BOLD}· trojan-go${PLAIN}"
+    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
+
+    echo -n -e "  ${BLUE}运行状态${PLAIN} │ "
     statusText
     if [[ "$(status)" -ge 2 ]]; then
         cur_domain=$( loadState >/dev/null 2>&1; echo "$DOMAIN" )
-        echo -e " 使用域名：${RED}${cur_domain:-未记录}${PLAIN}"
+        echo -e "  ${BLUE}使用域名${PLAIN} │ ${RED}${cur_domain:-未记录}${PLAIN}"
     fi
-    showBBR
-    echo ""
+    echo -e "  ${BLUE}BBR${PLAIN}      │ $(bbrText)"
 
-    echo -e "  ${GREEN}1.${PLAIN}  安装go"
-    echo -e "  ${GREEN}2.${PLAIN}  安装go+WS"
-    echo " -------------"
-    echo -e "  ${GREEN}3.${PLAIN}  重启go"
-    echo " -------------"
-    echo -e "  ${GREEN}4.${PLAIN}  定时重启管理"
-    echo " -------------"
-    echo -e "  ${GREEN}0.${PLAIN} 退出"
+    echo -e "${BLUE}${DIV_LINE}${PLAIN}"
     echo ""
+    echo -e "   ${GREEN}[1]${PLAIN}  安装 go"
+    echo -e "   ${GREEN}[2]${PLAIN}  安装 go + WS"
+    echo ""
+    echo -e "   ${GREEN}[3]${PLAIN}  重启服务"
+    echo -e "   ${GREEN}[4]${PLAIN}  定时重启管理"
+    echo ""
+    echo -e "   ${GREEN}[0]${PLAIN}  退出"
+    echo ""
+    echo -e "${BLUE}${DIV_LINE}${PLAIN}"
 
-    read -p " 请选择操作[0-4]：" answer
+    read -p "  请选择操作 [0-4] : " answer
     case $answer in
         0)
             exit 0
@@ -1472,14 +1484,16 @@ menu() {
         4)
             # 定时重启管理子菜单
             echo ""
-            echo -e "${BLUE}========== 定时重启管理 ==========${PLAIN}"
-            echo " 1) 开启定时重启"
-            echo " 2) 关闭定时重启"
-            echo " 3) 修改重启时间"
-            echo " 4) 查看定时任务状态"
-            echo " 0) 返回主菜单"
-            echo -e "${BLUE}==================================${PLAIN}"
-            read -p " 请选择[0-4]：" sub_answer
+            echo -e "${BLUE}${BAR_LINE}${PLAIN}"
+            echo -e "   ${BOLD}定时重启管理${PLAIN}"
+            echo -e "${BLUE}${BAR_LINE}${PLAIN}"
+            echo -e "   ${GREEN}[1]${PLAIN}  开启定时重启"
+            echo -e "   ${GREEN}[2]${PLAIN}  关闭定时重启"
+            echo -e "   ${GREEN}[3]${PLAIN}  修改重启时间"
+            echo -e "   ${GREEN}[4]${PLAIN}  查看定时任务状态"
+            echo -e "   ${GREEN}[0]${PLAIN}  返回上级"
+            echo -e "${BLUE}${DIV_LINE}${PLAIN}"
+            read -p "  请选择 [0-4] : " sub_answer
             case $sub_answer in
                 1)
                     if [[ "$(getAutoRestartStatus)" = "enabled" ]]; then
