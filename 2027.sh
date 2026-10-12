@@ -9,10 +9,6 @@ BLUE="\033[36m"     # Info message
 BOLD="\033[1m"      # 标题加粗
 PLAIN='\033[0m'
 
-# 居中缩进：标题文字固定，直接给空格数（按约 49 列宽度居中；换标题后按需微调）
-TITLE_PAD="             "      # 13 空格：GO 一键脚本 · trojan-go
-MID_PAD="                  "   # 18 空格：定时任务状态 / 定时重启管理
-
 # ---------- 可自定义项 ----------
 ZIP_FILE="trojan-go"
 CONFIG_FILE="/etc/trojan-go/config.json"
@@ -1424,7 +1420,7 @@ showInfo() {
 showCronStatus() {
     local status=$(getAutoRestartStatus)
     echo ""
-    echo -e "${BOLD}${BLUE}${MID_PAD}定时任务状态${PLAIN}"
+    echo -e "   ${BOLD}${BLUE}定时任务状态${PLAIN}"
     echo ""
     if [[ "$status" = "enabled" ]]; then
         echo -e "   ${BLUE}定时重启${PLAIN}：${GREEN}已启用${PLAIN}"
@@ -1441,7 +1437,7 @@ menu() {
     local cur_domain
 
     echo ""
-    echo -e "${BOLD}${RED}${TITLE_PAD}GO 一键脚本${PLAIN} ${BOLD}· trojan-go${PLAIN}"
+    echo -e "   ${BOLD}${RED}GO 一键脚本${PLAIN} ${BOLD}· trojan-go${PLAIN}"
     echo ""
     echo -n -e "   ${BLUE}运行状态${PLAIN}："
     statusText
@@ -1478,7 +1474,7 @@ menu() {
         4)
             # 定时重启管理子菜单
             echo ""
-            echo -e "${BOLD}${BLUE}${MID_PAD}定时重启管理${PLAIN}"
+            echo -e "   ${BOLD}${BLUE}定时重启管理${PLAIN}"
             echo ""
             echo -e "   ${GREEN}[1]${PLAIN}  开启定时重启"
             echo -e "   ${GREEN}[2]${PLAIN}  关闭定时重启"
