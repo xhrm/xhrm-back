@@ -23,10 +23,14 @@ TROJAN_VERSION=""                  # ④ 指定 tag（留空=用最新 release�
 TROJAN_REPO="fregie/trojan-go"     # ⑤ GitHub 仓库，换 fork 时改这里
 TROJAN_BINARY_NAME="trojan-go"     # ⑥ 解压后主程序名（自动识别失败时的兜底）
 TROJAN_LISTEN_ADDR=""              # ⑦ 监听地址，留空=自动（有 IPv6 用 :: 双栈，否则用 0.0.0.0）
+ENABLE_BBR="auto"                  # ⑧ BBR：auto=Debian 且内核≥4.9 时自动开启；yes=强制尝试；no=不处理
+BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"   # BBR 参数落盘位置
 # -------------------------------
 
 # 运行期全局变量：先全部初始化，避免未定义变量带来意外行为
 DOMAIN=""
+DOMAIN_IN=""
+DOMAIN_ERR=""
 PASSWORD=""
 PORT=""
 WS="false"
@@ -50,6 +54,40 @@ randStr() {
 
 validDomain() {
     [[ "$1" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$ ]]
+}
+
+# 域名输入检查：自动去掉首尾空白和结尾多余的点，再逐类给出明确错误
+# 通过时结果写入 DOMAIN_IN（已转小写），失败时原因写入 DOMAIN_ERR 并返回 1
+normalizeDomain() {
+    local raw="$1" bad
+    raw="${raw#"${raw%%[![:space:]]*}"}"      # 去掉首部空白
+    raw="${raw%"${raw##*[![:space:]]}"}"      # 去掉尾部空白（含粘贴带来的 \r）
+    raw="${raw%.}"                            # 去掉结尾多余的点
+    DOMAIN_IN="${raw,,}"
+    DOMAIN_ERR=""
+
+    if [[ -z "$DOMAIN_IN" ]]; then
+        DOMAIN_ERR="域名不能为空"
+        return 1
+    fi
+    if [[ "$DOMAIN_IN" =~ [[:space:]] ]]; then
+        DOMAIN_ERR="域名里不能有空格，请只输入域名本身"
+        return 1
+    fi
+    if [[ "$DOMAIN_IN" == http://* || "$DOMAIN_IN" == https://* ]]; then
+        DOMAIN_ERR="只填域名本身，不要带 http:// 或 https:// 前缀"
+        return 1
+    fi
+    if [[ "$DOMAIN_IN" =~ [^a-z0-9.-] ]]; then
+        bad=$(printf '%s' "$DOMAIN_IN" | tr -d 'a-z0-9.-')
+        DOMAIN_ERR="含有不允许的标点或字符「${bad}」，域名只能由字母、数字、连字符(-)和点(.)组成"
+        return 1
+    fi
+    if ! validDomain "$DOMAIN_IN"; then
+        DOMAIN_ERR="域名格式不正确，应为类似 example.com 的形式"
+        return 1
+    fi
+    return 0
 }
 
 checkSystem() {
@@ -135,6 +173,68 @@ listenAddr() {
         echo "0.0.0.0"
     fi
 }
+
+# ================= BBR 加速（Debian 默认开启） =================
+
+# 当前是否已经在用 bbr
+bbrEnabled() {
+    [[ "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" = "bbr" ]]
+}
+
+# 显示 BBR 状态（菜单和配置信息里都用它）
+showBBR() {
+    local cc qdisc
+    cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)
+    qdisc=$(cat /proc/sys/net/core/default_qdisc 2>/dev/null)
+    if [[ "$cc" = "bbr" ]]; then
+        echo -e " BBR：${GREEN}已开启${PLAIN}（拥塞控制 bbr，队列 ${qdisc:-未知}）"
+    else
+        echo -e " BBR：${RED}未开启${PLAIN}（当前拥塞控制 ${cc:-未知}）"
+    fi
+}
+
+# 开启 BBR：写 sysctl 配置并立即生效
+setBBR() {
+    if [[ "$ENABLE_BBR" = "no" ]]; then
+        colorEcho $YELLOW " 已按配置跳过 BBR（ENABLE_BBR=\"no\"）"
+        return 0
+    fi
+    if [[ "$ENABLE_BBR" = "auto" && ! -f /etc/debian_version ]]; then
+        colorEcho $YELLOW " 非 Debian 系统，跳过 BBR 设置"
+        return 0
+    fi
+
+    local kver k1 k2
+    kver=$(uname -r)
+    k1=${kver%%.*}
+    k2=$(echo "${kver#*.}" | cut -d. -f1)
+    if [[ ! "$k1" =~ ^[0-9]+$ || ! "$k2" =~ ^[0-9]+$ ]]; then
+        colorEcho $YELLOW " 无法识别内核版本（${kver}），跳过 BBR 设置"
+        return 0
+    fi
+    if (( k1 < 4 || (k1 == 4 && 10#$k2 < 9) )); then
+        colorEcho $YELLOW " 内核 ${kver} 不支持 BBR（需要 4.9 以上），跳过"
+        return 0
+    fi
+
+    mkdir -p /etc/sysctl.d
+    cat > "$BBR_CONF_FILE" <<-EOF
+# 由 go 一键脚本写入：开启 BBR
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+
+    modprobe tcp_bbr 2>/dev/null || true
+    if sysctl -p "$BBR_CONF_FILE" >/dev/null 2>&1 && bbrEnabled; then
+        colorEcho $BLUE " BBR 已开启（拥塞控制 bbr / 队列 fq），配置已写入 ${BBR_CONF_FILE}"
+    else
+        colorEcho $YELLOW " BBR 未能立即生效（当前内核可能没提供 bbr/fq）"
+        colorEcho $YELLOW " 配置已写入 ${BBR_CONF_FILE}，重启后会自动重试"
+        colorEcho $YELLOW " 当前拥塞控制：$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)"
+    fi
+    return 0
+}
+# =============================================================
 
 # 列出监听指定端口的进程（用于排查端口占用）
 portOwner() {
@@ -304,25 +404,14 @@ getData() {
     echo ""
     can_change=$1
     if [[ "$can_change" != "yes" ]]; then
-        echo " go一键脚本，运行之前请确认如下条件已经具备："
-        echo -e "  ${RED}1. 一个伪装域名${PLAIN}"
-        echo -e "  ${RED}2. 伪装域名DNS解析已指向当前服务器${PLAIN}"
-        echo -e "  3. 如果/root目录下有 ${GREEN}*.pem${PLAIN} 和 ${GREEN}*.key${PLAIN} 证书密钥文件，将优先使用本地证书"
-        echo " "
-        read -p " 确认满足按y，按其他退出脚本：" answer
-        if [[ "${answer,,}" != "y" ]]; then
-            exit 0
-        fi
-
-        echo ""
         while true
         do
-            read -p " 请输入伪装域名：" DOMAIN
-            DOMAIN="${DOMAIN,,}"
-            if validDomain "$DOMAIN"; then
+            read -p " 请输入伪装域名：" domain_input
+            if normalizeDomain "$domain_input"; then
+                DOMAIN="$DOMAIN_IN"
                 break
             fi
-            echo -e " ${RED}伪装域名格式不正确，请重新输入！${PLAIN}"
+            echo -e " ${RED}${DOMAIN_ERR}${PLAIN}"
         done
         colorEcho $BLUE " 伪装域名(host)：$DOMAIN"
 
@@ -493,7 +582,7 @@ setAutoRestart() {
     echo "$minute $hour * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
     chmod 644 $CRON_FILE
 
-    echo -e " ${BLUE}定时任务已设置：每天 $hour:$minute 清理日志并自动重启 $SERVICE_NAME${PLAIN}"
+    echo -e " ${BLUE}定时任务已设置：每天 $(printf '%02d:%02d' "$hour" "$minute") 清理日志并自动重启 $SERVICE_NAME${PLAIN}"
 }
 
 # 关闭定时重启
@@ -675,7 +764,7 @@ getCert() {
     ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc \
         --key-file "$KEY_FILE" \
         --fullchain-file "$CERT_FILE" \
-        --reloadcmd "/bin/systemctl try-restart trojan-go >/dev/null 2>&1"
+        --reloadcmd "if [ -f /etc/systemd/system/trojan-go.service ]; then /bin/systemctl try-restart trojan-go >/dev/null 2>&1; fi"
     [[ -f $CERT_FILE && -f $KEY_FILE ]] || {
         colorEcho $RED " 获取证书失败"
         exit 1
@@ -1184,7 +1273,7 @@ install() {
     fi
 
     # 只装真正用得到的：下载、解压、证书、定时任务
-    $CMD_INSTALL wget curl unzip tar openssl ca-certificates
+    $CMD_INSTALL wget curl unzip tar openssl ca-certificates kmod
     if [[ "$PMT" = "yum" ]]; then
         $CMD_INSTALL xz cronie
     else
@@ -1197,6 +1286,8 @@ install() {
             exit 1
         fi
     done
+
+    setBBR
 
     installNginx
     setFirewall
@@ -1321,6 +1412,7 @@ showInfo() {
         echo -e "   websocket：${RED}true${PLAIN}"
         echo -e "   ws路径(ws path)：${RED}${WSPATH}${PLAIN}"
     fi
+    showBBR
     echo ""
 }
 
@@ -1349,6 +1441,7 @@ menu() {
         cur_domain=$( loadState >/dev/null 2>&1; echo "$DOMAIN" )
         echo -e " 使用域名：${RED}${cur_domain:-未记录}${PLAIN}"
     fi
+    showBBR
     echo ""
 
     echo -e "  ${GREEN}1.${PLAIN}  安装go"
