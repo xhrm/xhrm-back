@@ -9,9 +9,9 @@ BLUE="\033[36m"     # Info message
 BOLD="\033[1m"      # 标题加粗
 PLAIN='\033[0m'
 
-# 界面分隔线（终端需支持 UTF-8，SSH 客户端开 UTF-8 即可）
-BAR_LINE="════════════════════════════════════════════════"
-DIV_LINE="────────────────────────────────────────────────"
+# 居中缩进：标题文字固定，直接给空格数（按约 49 列宽度居中；换标题后按需微调）
+TITLE_PAD="             "      # 13 空格：GO 一键脚本 · trojan-go
+MID_PAD="                  "   # 18 空格：定时任务状态 / 定时重启管理
 
 # ---------- 可自定义项 ----------
 ZIP_FILE="trojan-go"
@@ -1417,24 +1417,22 @@ showInfo() {
         echo -e "   websocket：${RED}true${PLAIN}"
         echo -e "   ws路径(ws path)：${RED}${WSPATH}${PLAIN}"
     fi
-    echo -e "   BBR：$(bbrText)"
+    echo -e "   BBR 加速：$(bbrText)"
     echo ""
 }
 
 showCronStatus() {
     local status=$(getAutoRestartStatus)
     echo ""
-    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
-    echo -e "   ${BOLD}定时任务状态${PLAIN}"
-    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
+    echo -e "${BOLD}${BLUE}${MID_PAD}定时任务状态${PLAIN}"
+    echo ""
     if [[ "$status" = "enabled" ]]; then
-        echo -e "  ${BLUE}定时重启${PLAIN} │ ${GREEN}已启用${PLAIN}"
-        echo -e "  ${BLUE}执行时间${PLAIN} │ 每天 ${CURRENT_RESTART_TIME}"
-        echo -e "  ${BLUE}执行动作${PLAIN} │ 清理日志文件并重启 trojan-go 服务"
+        echo -e "   ${BLUE}定时重启${PLAIN}：${GREEN}已启用${PLAIN}"
+        echo -e "   ${BLUE}执行时间${PLAIN}：每天 ${CURRENT_RESTART_TIME}"
+        echo -e "   ${BLUE}执行动作${PLAIN}：清理日志文件并重启 trojan-go 服务"
     else
-        echo -e "  ${BLUE}定时重启${PLAIN} │ ${RED}已禁用${PLAIN}"
+        echo -e "   ${BLUE}定时重启${PLAIN}：${RED}已禁用${PLAIN}"
     fi
-    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
     echo ""
 }
 
@@ -1442,19 +1440,16 @@ menu() {
     clear
     local cur_domain
 
-    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
-    echo -e "   ${BOLD}${RED}GO 一键脚本${PLAIN} ${BOLD}· trojan-go${PLAIN}"
-    echo -e "${BLUE}${BAR_LINE}${PLAIN}"
-
-    echo -n -e "  ${BLUE}运行状态${PLAIN} │ "
+    echo ""
+    echo -e "${BOLD}${RED}${TITLE_PAD}GO 一键脚本${PLAIN} ${BOLD}· trojan-go${PLAIN}"
+    echo ""
+    echo -n -e "   ${BLUE}运行状态${PLAIN}："
     statusText
     if [[ "$(status)" -ge 2 ]]; then
         cur_domain=$( loadState >/dev/null 2>&1; echo "$DOMAIN" )
-        echo -e "  ${BLUE}使用域名${PLAIN} │ ${RED}${cur_domain:-未记录}${PLAIN}"
+        echo -e "   ${BLUE}使用域名${PLAIN}：${RED}${cur_domain:-未记录}${PLAIN}"
     fi
-    echo -e "  ${BLUE}BBR${PLAIN}      │ $(bbrText)"
-
-    echo -e "${BLUE}${DIV_LINE}${PLAIN}"
+    echo -e "   ${BLUE}BBR 加速${PLAIN}：$(bbrText)"
     echo ""
     echo -e "   ${GREEN}[1]${PLAIN}  安装 go"
     echo -e "   ${GREEN}[2]${PLAIN}  安装 go + WS"
@@ -1464,7 +1459,6 @@ menu() {
     echo ""
     echo -e "   ${GREEN}[0]${PLAIN}  退出"
     echo ""
-    echo -e "${BLUE}${DIV_LINE}${PLAIN}"
 
     read -p "  请选择操作 [0-4] : " answer
     case $answer in
@@ -1484,15 +1478,14 @@ menu() {
         4)
             # 定时重启管理子菜单
             echo ""
-            echo -e "${BLUE}${BAR_LINE}${PLAIN}"
-            echo -e "   ${BOLD}定时重启管理${PLAIN}"
-            echo -e "${BLUE}${BAR_LINE}${PLAIN}"
+            echo -e "${BOLD}${BLUE}${MID_PAD}定时重启管理${PLAIN}"
+            echo ""
             echo -e "   ${GREEN}[1]${PLAIN}  开启定时重启"
             echo -e "   ${GREEN}[2]${PLAIN}  关闭定时重启"
             echo -e "   ${GREEN}[3]${PLAIN}  修改重启时间"
             echo -e "   ${GREEN}[4]${PLAIN}  查看定时任务状态"
             echo -e "   ${GREEN}[0]${PLAIN}  返回上级"
-            echo -e "${BLUE}${DIV_LINE}${PLAIN}"
+            echo ""
             read -p "  请选择 [0-4] : " sub_answer
             case $sub_answer in
                 1)
