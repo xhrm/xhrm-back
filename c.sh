@@ -1061,10 +1061,17 @@ installTrojan() {
         [[ -n "$f" ]] && cp -f "$f" /etc/trojan-go/
     done
     f=$(find "/tmp/${ZIP_FILE}" -type f -name '*.service' | head -n1)
-    if [[ -n "$f" ]]; then
+    if [[ -n "$f" && -s "$f" ]]; then
         cp -f "$f" /etc/systemd/system/trojan-go.service
         sed -i '/User=nobody/d' /etc/systemd/system/trojan-go.service
-    else
+        # 包里的 unit 不能全信：ExecStart 可能指向别的配置路径，或引用了未赋值的变量，
+        # 那样会变成 -config /etc/trojan-go/.json 直接启动失败。这里统一强制成本脚本的配置路径。
+        sed -i -E 's#^ExecStart=.*#ExecStart=/usr/bin/trojan-go -config /etc/trojan-go/config.json#' \
+            /etc/systemd/system/trojan-go.service
+    fi
+    # 包里没有 unit、或修正后仍然没有可用的 ExecStart，就写脚本自带的那份
+    if [[ ! -s /etc/systemd/system/trojan-go.service ]] ||
+        ! grep -q '^ExecStart=' /etc/systemd/system/trojan-go.service; then
         writeDefaultService
     fi
 
@@ -1345,7 +1352,9 @@ start() {
             echo " 端口占用信息："
             echo "$owner"
         fi
-        colorEcho $YELLOW " 可用 journalctl -xen -u trojan-go 查看失败原因"
+        colorEcho $YELLOW " 最近日志（最后 8 行）："
+        journalctl -u trojan-go -n 8 --no-pager 2>/dev/null | sed 's/^/   /'
+        colorEcho $YELLOW " 完整原因可用 journalctl -xen -u trojan-go 查看"
         return 1
     fi
     if ! systemctl is-active --quiet nginx; then
