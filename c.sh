@@ -17,14 +17,16 @@ NGINX_CONF_PATH="/etc/nginx/conf.d/"
 HTML_ZIP_URL="https://raw.githubusercontent.com/xhrm/xhrm-back/master/index.zip"
 # ---------- trojan-go 下载来源（换仓库时通常只改这一段） ----------
 # 生效顺序：TROJAN_ZIP_URL > 按 TROJAN_ASSET_PATTERN 拼地址 > 从 release 资源列表自动识别
+# 版本策略：TROJAN_VERSION 填了就固定用它；留空则按 TROJAN_VERSION_CHANNEL 自动选
 TROJAN_ZIP_URL=""                  # ① 直接指定下载地址（最优先，无视下面所有规则）
 TROJAN_ASSET_PATTERN="trojan-go-linux-{arch}.zip"   # ② 文件名模板，支持 {arch} {os} {version}
 TROJAN_ARCH_ALIAS=""               # ③ 仓库对架构的写法与默认不同时填，如 x86_64 / 64bit
-TROJAN_VERSION=""                  # ④ 指定 tag（留空=用最新 release；模板含 {version} 时自动取最新 tag）
-TROJAN_REPO="fregie/trojan-go"     # ⑤ GitHub 仓库，换 fork 时改这里
-TROJAN_BINARY_NAME="trojan-go"     # ⑥ 解压后主程序名（自动识别失败时的兜底）
-TROJAN_LISTEN_ADDR=""              # ⑦ 监听地址，留空=自动（有 IPv6 用 :: 双栈，否则用 0.0.0.0）
-ENABLE_BBR="auto"                  # ⑧ BBR：auto=Debian 且内核≥4.9 时自动开启；yes=强制尝试；no=不处理
+TROJAN_VERSION=""                  # ④ 固定 tag，如 v1.2.1（留空=自动；填了只用这一个）
+TROJAN_VERSION_CHANNEL="prerelease" # ⑤ 自动选版策略：prerelease=最新 release(含预发布)优先、失败退回稳定版；stable=只跟随稳定版
+TROJAN_REPO="fregie/trojan-go"     # ⑥ GitHub 仓库，换 fork 时改这里
+TROJAN_BINARY_NAME="trojan-go"     # ⑦ 解压后主程序名（自动识别失败时的兜底）
+TROJAN_LISTEN_ADDR=""              # ⑧ 监听地址，留空=自动（有 IPv6 用 :: 双栈，否则用 0.0.0.0）
+ENABLE_BBR="auto"                  # ⑨ BBR：auto=Debian 且内核≥4.9 时自动开启；yes=强制尝试；no=不处理
 BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"   # BBR 参数落盘位置
 # -------------------------------
 
@@ -44,6 +46,7 @@ KEY_FILE=""
 VERSION=""
 DOWNLOAD_URL=""
 CANDIDATES=()
+TAGS=()          # 本次要尝试的 release tag，按优先级排列（预发布优先时：[最新, 稳定版]）
 
 colorEcho() {
     echo -e "${1}${@:2}${PLAIN}"
@@ -130,6 +133,7 @@ PROXY_URL='${PROXY_URL}'
 ALLOW_SPIDER='${ALLOW_SPIDER}'
 CERT_FILE='${CERT_FILE}'
 KEY_FILE='${KEY_FILE}'
+VERSION='${VERSION}'
 EOF
     chmod 600 "$STATE_FILE"
 }
@@ -303,10 +307,64 @@ platformArchRegex() {
     esac
 }
 
-# 仓库最新 release 的 tag（tag 原样返回，GitHub 的下载路径就是 tag 原文）
+# 仓库最新 release 的 tag（稳定版）。注意 GitHub 的 releases/latest 会跳过所有预发布，
+# 所以"最新稳定版"和"最新版"可能不是同一个。tag 原样返回，GitHub 下载路径就是 tag 原文
 apiLatestTag() {
     curl -fsSL --max-time 15 "https://api.github.com/repos/${TROJAN_REPO}/releases/latest" 2>/dev/null \
         | grep -m1 '"tag_name"' | cut -d'"' -f4
+}
+
+# 仓库最新的 release tag（含预发布）。releases 列表默认按创建时间倒序，第一条就是最新
+apiNewestTag() {
+    curl -fsSL --max-time 20 "https://api.github.com/repos/${TROJAN_REPO}/releases?per_page=10" 2>/dev/null \
+        | grep -m1 '"tag_name"' | cut -d'"' -f4
+}
+
+# 解析本次要尝试的 tag 列表，按优先级写进 TAGS：
+#   TROJAN_VERSION 非空              → 只用它（手动固定版本）
+#   TROJAN_VERSION_CHANNEL=stable    → 只用 releases/latest（稳定版）
+#   其它（默认 prerelease）          → 先取最新 release（含预发布），再附稳定版兜底
+# 两个接口都没通时 TAGS 为空，调用方回退到 releases/latest/download/<文件名> 永久链接
+resolveTags() {
+    TAGS=()
+    VERSION=""
+
+    if [[ -n "$TROJAN_VERSION" ]]; then
+        TAGS+=("$TROJAN_VERSION")
+        VERSION="$TROJAN_VERSION"
+        return 0
+    fi
+
+    local tag stable
+    if [[ "$TROJAN_VERSION_CHANNEL" != "stable" ]]; then
+        tag=$(apiNewestTag)
+        if [[ -n "$tag" ]]; then
+            TAGS+=("$tag")
+        else
+            colorEcho $YELLOW " 查询最新 release（含预发布）失败，改用稳定版" >&2
+        fi
+    fi
+
+    stable=$(apiLatestTag)
+    if [[ -n "$stable" && "$stable" != "${TAGS[0]:-}" ]]; then
+        TAGS+=("$stable")
+    fi
+    [[ -n "${TAGS[0]:-}" ]] && VERSION="${TAGS[0]}"
+
+    if [[ ${#TAGS[@]} -gt 1 ]]; then
+        colorEcho $BLUE " 版本候选（按优先级）：${TAGS[*]}"
+    elif [[ ${#TAGS[@]} -eq 1 ]]; then
+        colorEcho $BLUE " 版本：${TAGS[0]}"
+    fi
+    return 0
+}
+
+# 从下载地址里取出版本号（形如 .../releases/download/<tag>/<文件名>）
+tagFromUrl() {
+    local u="$1"
+    [[ "$u" == */releases/download/* ]] || return 0
+    u="${u#*/releases/download/}"
+    echo "${u%%/*}"
 }
 
 # 某个 release 里所有资源的下载地址，一行一个
@@ -320,7 +378,10 @@ apiAssetList() {
 buildDownloadCandidates() {
     CANDIDATES=()
     [[ -n "$TROJAN_ZIP_URL" ]] && CANDIDATES+=("$TROJAN_ZIP_URL")
-    [[ -z "$TROJAN_ASSET_PATTERN" ]] && return 0
+    if [[ -z "$TROJAN_ASSET_PATTERN" ]]; then
+        resolveTags          # 后面"资源列表自动识别"那步要用 TAGS
+        return 0
+    fi
 
     local arch name tag
     arch=$(pkgArch) || {
@@ -328,26 +389,28 @@ buildDownloadCandidates() {
         colorEcho $YELLOW " 可在脚本顶部设置 TROJAN_ARCH_ALIAS（仓库的架构写法）或 TROJAN_ZIP_URL"
         exit 1
     }
-    name="${TROJAN_ASSET_PATTERN//\{arch\}/$arch}"
-    name="${name//\{os\}/linux}"
 
-    if [[ "$name" == *"{version}"* ]]; then
-        # 模板里带版本号：需要先取到 tag
-        tag="${TROJAN_VERSION:-$(apiLatestTag)}"
-        if [[ -z "$tag" ]]; then
+    # 版本优先级：TROJAN_VERSION 固定 > 最新 release（含预发布）> 稳定版兜底
+    resolveTags
+    if [[ ${#TAGS[@]} -eq 0 ]]; then
+        if [[ "$TROJAN_ASSET_PATTERN" == *"{version}"* ]]; then
             colorEcho $YELLOW " 文件名模板含 {version}，但没取到 release tag，改为自动识别资源列表"
             return 0
         fi
-        VERSION="$tag"
+        # 两个 release 接口都没通：releases/latest/download/<文件名> 是不用查 API 的永久链接
+        name="${TROJAN_ASSET_PATTERN//\{arch\}/$arch}"
+        name="${name//\{os\}/linux}"
+        CANDIDATES+=("https://github.com/${TROJAN_REPO}/releases/latest/download/${name}")
+        colorEcho $YELLOW " 未能查询 release 列表，改用稳定版永久链接（具体版本由 GitHub 决定）"
+        return 0
+    fi
+
+    for tag in "${TAGS[@]}"; do
+        name="${TROJAN_ASSET_PATTERN//\{arch\}/$arch}"
+        name="${name//\{os\}/linux}"
         name="${name//\{version\}/$tag}"
         CANDIDATES+=("https://github.com/${TROJAN_REPO}/releases/download/${tag}/${name}")
-    elif [[ -n "$TROJAN_VERSION" ]]; then
-        VERSION="$TROJAN_VERSION"
-        CANDIDATES+=("https://github.com/${TROJAN_REPO}/releases/download/${VERSION}/${name}")
-    else
-        # releases/latest/download/<文件名> 是 GitHub 的永久链接，不需要查 API
-        CANDIDATES+=("https://github.com/${TROJAN_REPO}/releases/latest/download/${name}")
-    fi
+    done
     return 0
 }
 
@@ -358,6 +421,12 @@ printDownloadHelp() {
     echo "      不同仓库架构写法不同，可配合 TROJAN_ARCH_ALIAS=\"x86_64\" 这类覆盖"
     echo "   2) 或直接把地址写进 TROJAN_ZIP_URL=\"https://.../xxx.zip\""
     echo "   3) 或改 TROJAN_REPO / TROJAN_VERSION 指向实际仓库与版本"
+    echo "   4) 版本策略：TROJAN_VERSION=\"v1.2.1\" 固定版本；TROJAN_VERSION_CHANNEL=stable 只跟随稳定版"
+    if [[ ${#TAGS[@]} -gt 0 ]]; then
+        echo "   本次尝试的版本：${TAGS[*]}（按优先级）"
+    else
+        echo "   本次尝试的版本：未取到 release tag，已回退 releases/latest 永久链接"
+    fi
     echo "   当前架构：$(uname -m)   模板中的架构取值：$(pkgArch 2>/dev/null)"
 }
 
@@ -880,8 +949,9 @@ EOF
 }
 
 # 下载 trojan-go 包：先按命名规则拼地址，失败再从 release 资源列表自动识别
+# 候选地址按版本优先级排列（TAGS），所以"最新预发布下不到"会自动落到稳定版
 downloadTrojanPackage() {
-    local url hits matched arch_re zip_urls tar_urls other_urls
+    local url hits matched arch_re zip_urls tar_urls other_urls api apis tag
     rm -f /tmp/${ZIP_FILE}.pkg
 
     buildDownloadCandidates
@@ -890,6 +960,7 @@ downloadTrojanPackage() {
         echo " 尝试下载：$url"
         if wget -q -T 30 -t 2 -O /tmp/${ZIP_FILE}.pkg "$url" && [[ -s /tmp/${ZIP_FILE}.pkg ]]; then
             DOWNLOAD_URL="$url"
+            VERSION="$(tagFromUrl "$url")"
             return 0
         fi
         colorEcho $YELLOW " 该地址不可用，换下一个"
@@ -901,40 +972,53 @@ downloadTrojanPackage() {
         colorEcho $RED " 暂不支持的系统架构，无法自动识别安装包"
         exit 1
     }
-    if [[ -n "$VERSION" ]]; then
-        hits=$(apiAssetList "https://api.github.com/repos/${TROJAN_REPO}/releases/tags/${VERSION}")
+
+    # 按版本优先级逐个查资源列表（TAGS 为空时退回稳定版 latest 接口）
+    apis=()
+    if [[ ${#TAGS[@]} -gt 0 ]]; then
+        for tag in "${TAGS[@]}"; do
+            apis+=("https://api.github.com/repos/${TROJAN_REPO}/releases/tags/${tag}")
+        done
     else
-        hits=$(apiAssetList)
-    fi
-    if [[ -z "$hits" ]]; then
-        colorEcho $RED " 无法获取 ${TROJAN_REPO} 的 release 资源列表（仓库名是否正确？GitHub API 是否被限流？）"
-        printDownloadHelp
-        exit 1
+        apis+=("https://api.github.com/repos/${TROJAN_REPO}/releases/latest")
     fi
 
-    # 先按架构筛，再排除其它系统与校验文件
-    matched=$(echo "$hits" | grep -Ei "$arch_re" \
-        | grep -Eiv 'windows|darwin|macos|freebsd|openbsd|netbsd|android|\.(md5|sha1|sha256|sha512|sig|asc|txt|json)$')
-    if [[ -z "$matched" ]]; then
-        colorEcho $RED " 资源列表里没有匹配当前架构（$(uname -m)）的文件，该 release 包含："
-        echo "$hits" | sed 's|.*/||' | sed 's/^/   /'
-        printDownloadHelp
-        exit 1
-    fi
-
-    # 下载顺序：zip 优先，其次 tar 包，最后其它压缩格式
-    zip_urls=$(echo "$matched" | grep -Ei '\.zip$')
-    tar_urls=$(echo "$matched" | grep -Ei '\.(tar\.gz|tgz|tar\.xz|txz|tar\.bz2)$')
-    other_urls=$(echo "$matched" | grep -Eiv '\.zip$|\.(tar\.gz|tgz|tar\.xz|txz|tar\.bz2)$')
-    for url in $zip_urls $tar_urls $other_urls; do
-        [[ -n "$url" ]] || continue
-        echo " 尝试下载：$url"
-        if wget -q -T 30 -t 2 -O /tmp/${ZIP_FILE}.pkg "$url" && [[ -s /tmp/${ZIP_FILE}.pkg ]]; then
-            DOWNLOAD_URL="$url"
-            echo " 已匹配到：$(echo "$url" | sed 's|.*/||')"
-            return 0
+    for api in "${apis[@]}"; do
+        hits=$(apiAssetList "$api")
+        if [[ -z "$hits" ]]; then
+            colorEcho $YELLOW " 取不到资源列表（$(echo "$api" | sed 's|.*/releases/||')），试下一个版本"
+            continue
         fi
-        colorEcho $YELLOW " 该地址不可用，换下一个"
+
+        # 先按架构筛，再排除其它系统与校验文件
+        matched=$(echo "$hits" | grep -Ei "$arch_re" \
+            | grep -Eiv 'windows|darwin|macos|freebsd|openbsd|netbsd|android|\.(md5|sha1|sha256|sha512|sig|asc|txt|json)$')
+        if [[ -z "$matched" ]]; then
+            colorEcho $YELLOW " 该 release 里没有匹配当前架构（$(uname -m)）的文件"
+            # 最后一个版本才把文件清单打出来，方便定位架构写法
+            if [[ "$api" = "${apis[${#apis[@]}-1]}" ]]; then
+                echo "$hits" | sed 's|.*/||' | sed 's/^/   /'
+            else
+                colorEcho $YELLOW " 试下一个版本"
+            fi
+            continue
+        fi
+
+        # 下载顺序：zip 优先，其次 tar 包，最后其它压缩格式
+        zip_urls=$(echo "$matched" | grep -Ei '\.zip$')
+        tar_urls=$(echo "$matched" | grep -Ei '\.(tar\.gz|tgz|tar\.xz|txz|tar\.bz2)$')
+        other_urls=$(echo "$matched" | grep -Eiv '\.zip$|\.(tar\.gz|tgz|tar\.xz|txz|tar\.bz2)$')
+        for url in $zip_urls $tar_urls $other_urls; do
+            [[ -n "$url" ]] || continue
+            echo " 尝试下载：$url"
+            if wget -q -T 30 -t 2 -O /tmp/${ZIP_FILE}.pkg "$url" && [[ -s /tmp/${ZIP_FILE}.pkg ]]; then
+                DOWNLOAD_URL="$url"
+                VERSION="$(tagFromUrl "$url")"
+                echo " 已匹配到：$(echo "$url" | sed 's|.*/||')"
+                return 0
+            fi
+            colorEcho $YELLOW " 该地址不可用，换下一个"
+        done
     done
 
     colorEcho $RED " go安装文件下载失败"
@@ -945,6 +1029,7 @@ downloadTrojanPackage() {
 downloadFile() {
     downloadTrojanPackage
     echo " 下载地址：${DOWNLOAD_URL}"
+    [[ -n "${VERSION}" ]] && echo " 版本：${VERSION}"
 
     rm -f /tmp/html.zip
     wget -q -T 30 -t 2 -O /tmp/html.zip "$HTML_ZIP_URL"
@@ -1415,6 +1500,7 @@ showInfo() {
     echo ""
     echo -e " ${BLUE}go配置文件: ${PLAIN} ${RED}${CONFIG_FILE}${PLAIN}"
     echo -e " ${BLUE}go配置信息：${PLAIN}"
+    [[ -n "$VERSION" ]] && echo -e "   版本(version)：${RED}${VERSION}${PLAIN}"
     echo -e "   伪装域名/主机名(host)/SNI/peer名称：${RED}$DOMAIN${PLAIN}"
     echo -e "   端口(port)：${RED}$PORT${PLAIN}"
     echo -e "   密码(password)：${RED}$PASSWORD${PLAIN}"
