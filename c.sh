@@ -101,17 +101,14 @@ checkSystem() {
         exit 1
     fi
 
-    if command -v yum >/dev/null 2>&1; then
-        PMT="yum"
-        CMD_INSTALL="yum install -y "
-    elif command -v apt >/dev/null 2>&1; then
-        PMT="apt"
-        CMD_INSTALL="apt install -y "
-        export DEBIAN_FRONTEND=noninteractive   # 避免交互式提示卡住无人值守安装
-    else
-        echo -e " ${RED}不受支持的Linux系统${PLAIN}"
+    # 只支持 Debian/Ubuntu 等使用 apt 的系统
+    if ! command -v apt >/dev/null 2>&1; then
+        echo -e " ${RED}不受支持的Linux系统（需要 Debian/Ubuntu 等 apt 系统）${PLAIN}"
         exit 1
     fi
+    PMT="apt"
+    CMD_INSTALL="apt install -y "
+    export DEBIAN_FRONTEND=noninteractive   # 避免交互式提示卡住无人值守安装
 
     if ! command -v systemctl >/dev/null 2>&1; then
         echo -e " ${RED}系统版本过低，请升级到最新版本${PLAIN}"
@@ -633,11 +630,8 @@ setAutoRestart() {
     [[ -z "$minute" ]] && minute=10
 
     # 确保 cron 服务启动
-    if systemctl list-unit-files | grep -qE '^crond\.service'; then
-        CRON_SERVICE="crond"
-    elif systemctl list-unit-files | grep -qE '^cron\.service'; then
-        CRON_SERVICE="cron"
-    else
+    CRON_SERVICE="cron"
+    if ! systemctl list-unit-files | grep -qE '^cron\.service'; then
         echo "未找到 cron 服务，请确认已安装 cron。"
         return 1
     fi
@@ -685,18 +679,6 @@ modifyAutoRestartTime() {
 installNginx() {
     echo ""
     colorEcho $BLUE " 安装nginx..."
-    if [[ "$PMT" = "yum" ]]; then
-        $CMD_INSTALL epel-release
-        if [[ "$?" != "0" ]]; then
-            echo '[nginx-stable]
-name=nginx stable repo
-baseurl=http://nginx.org/packages/centos/$releasever/$basearch/
-gpgcheck=1
-enabled=1
-gpgkey=https://nginx.org/keys/nginx_signing.key
-module_hotfixes=true' > /etc/yum.repos.d/nginx.repo
-        fi
-    fi
     $CMD_INSTALL nginx
     if [[ "$?" != "0" ]]; then
         colorEcho $RED " Nginx安装失败"
@@ -807,18 +789,12 @@ getCert() {
     fi
 
     $CMD_INSTALL socat openssl
-    if [[ "$PMT" = "yum" ]]; then
-        $CMD_INSTALL cronie
-        systemctl start crond
-        systemctl enable crond
-    else
-        $CMD_INSTALL cron
-        systemctl start cron
-        systemctl enable cron
-    fi
+    $CMD_INSTALL cron
+    systemctl start cron
+    systemctl enable cron
 
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-        curl -fsSL https://get.acme.sh | sh -s email=bangs@bangs.cc
+        curl -fsSL https://get.acme.sh | sh -s email=bangs@${DOMAIN}
     fi
     ~/.acme.sh/acme.sh --upgrade --auto-upgrade >/dev/null 2>&1
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
@@ -1287,13 +1263,6 @@ EOF
     chmod 700 /etc/trojan-go 2>/dev/null
 }
 
-setSelinux() {
-    if [[ -s /etc/selinux/config ]] && grep 'SELINUX=enforcing' /etc/selinux/config; then
-        sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/selinux/config
-        setenforce 0
-    fi
-}
-
 # 添加 iptables 放行规则：先用 -C 判断是否已存在，避免重复插入
 addIptablesRules() {
     local p
@@ -1339,39 +1308,14 @@ setFirewall() {
 
 
 install() {
-    # 在脚本开始时检查系统版本
-    check_system_version() {
-        if grep -q "CentOS Linux release 7" /etc/centos-release 2>/dev/null; then
-            echo "检测到系统为CentOS 7，执行预处理命令..."
-            curl -fsSL https://autoinstall.plesk.com/PSA_18.0.62/examiners/repository_check.sh | bash -s -- update >/dev/null
-            if [[ $? -ne 0 ]]; then
-                echo "预处理命令执行失败"
-                exit 1
-            fi
-        else
-            echo "系统不是CentOS 7，继续执行脚本..."
-        fi
-    }
-
-    # 调用系统版本检测函数
-    check_system_version
-
     getData
 
-    if [[ "$PMT" = "apt" ]]; then
-        $PMT clean
-        $PMT update
-    else
-        $PMT clean all
-    fi
+    $PMT clean
+    $PMT update
 
     # 只装真正用得到的：下载、解压、证书、定时任务
     $CMD_INSTALL wget curl unzip tar openssl ca-certificates kmod
-    if [[ "$PMT" = "yum" ]]; then
-        $CMD_INSTALL xz cronie
-    else
-        $CMD_INSTALL xz-utils cron
-    fi
+    $CMD_INSTALL xz-utils cron
 
     for cmd in wget curl unzip tar openssl; do
         if ! command -v $cmd >/dev/null 2>&1; then
@@ -1394,8 +1338,6 @@ install() {
 
     # 记录本次安装的参数，供"查看配置/修改配置"复用
     saveState
-
-    setSelinux
 
     start
     setAutoRestart
