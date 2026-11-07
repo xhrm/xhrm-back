@@ -841,16 +841,15 @@ writeRobots() {
 }
 
 configNginx() {
+    local LISTEN_LINES
     mkdir -p /usr/share/nginx/html
     # 按 ENABLE_IPV6 决定是否加 listen [::]:80。
     # 纯 IPv4 的 VPS 上写 [::]:80 可能让 nginx 起不来（Address family not supported）。
-    local LISTEN_LINES
     if [[ "$ENABLE_IPV6" = "yes" ]] && ip -6 addr show scope global 2>/dev/null | grep -q 'inet6'; then
         LISTEN_LINES=$'    listen 80;\n    listen [::]:80;'
     else
         LISTEN_LINES='    listen 80;'
     fi
-
     if [[ "$ALLOW_SPIDER" = "n" ]]; then
         ROBOT_CONFIG="    location = /robots.txt {}"
     else
@@ -1289,14 +1288,14 @@ EOF
 addIptablesRules() {
     local p
     for p in 80 443; do
-        if ! iptables -w -C INPUT -p tcp --dport $p -j ACCEPT 2>/dev/null; then
-            iptables -w -I INPUT -p tcp --dport $p -j ACCEPT \
+        if ! iptables -w -C INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null; then
+            iptables -w -I INPUT -p tcp --dport "$p" -j ACCEPT \
                 || colorEcho $YELLOW " 添加 ${p}/tcp 放行规则失败，请检查 iptables"
         fi
     done
     if [[ "$PORT" != "443" ]]; then
-        if ! iptables -w -C INPUT -p tcp --dport ${PORT} -j ACCEPT 2>/dev/null; then
-            iptables -w -I INPUT -p tcp --dport ${PORT} -j ACCEPT \
+        if ! iptables -w -C INPUT -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null; then
+            iptables -w -I INPUT -p tcp --dport "$PORT" -j ACCEPT \
                 || colorEcho $YELLOW " 添加 ${PORT}/tcp 放行规则失败，请检查 iptables"
         fi
     fi
@@ -1381,14 +1380,14 @@ install() {
 }
 
 start() {
-    res=`status`
+    local res port owner i ok
+    res=$(status)
     if [[ $res -lt 2 ]]; then
         echo -e "${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
     # 端口以配置文件为准，兼容命令行直接调用 start 时全局变量为空
-    local port
     port=$(grep -m1 'local_port' "$CONFIG_FILE" 2>/dev/null | cut -d: -f2 | tr -d "\",' '")
     [[ -z "$port" ]] && port=443
 
@@ -1398,7 +1397,6 @@ start() {
     # 先等 nginx 在 80 真正监听，再启动 trojan-go。
     # trojan-go 默认 disable_http_check=false，会去连 127.0.0.1:80，
     # nginx 未就绪时启动可能进入异常状态（进程 active 但 443 没监听）。
-    local i
     for i in $(seq 1 10); do
         ss -tlnH "sport = :80" 2>/dev/null | grep -q . && break
         sleep 1
@@ -1407,7 +1405,7 @@ start() {
     systemctl restart trojan-go
 
     # 只认"进程 active + 端口真正 listen"才叫启动成功
-    local ok=0
+    ok=0
     for i in $(seq 1 10); do
         sleep 1
         if systemctl is-active --quiet trojan-go \
@@ -1416,6 +1414,21 @@ start() {
             break
         fi
     done
+
+    # 仅在 ENABLE_IPV6=yes 且确实写了 :: 时，双栈起不来才回退纯 IPv4
+    if [[ $ok -eq 0 ]] && grep -q '"local_addr": "::"' "$CONFIG_FILE"; then
+        colorEcho $YELLOW " 双栈(::)启动失败，改用 IPv4 监听(0.0.0.0)重试..."
+        sed -i 's/"local_addr": "::"/"local_addr": "0.0.0.0"/' "$CONFIG_FILE"
+        systemctl restart trojan-go
+        for i in $(seq 1 10); do
+            sleep 1
+            if systemctl is-active --quiet trojan-go \
+               && ss -tlnH "sport = :${port}" 2>/dev/null | grep -q .; then
+                ok=1
+                break
+            fi
+        done
+    fi
 
     if [[ $ok -eq 0 ]]; then
         colorEcho $RED " go启动失败：端口 ${port} 未监听！"
@@ -1429,7 +1442,6 @@ start() {
         colorEcho $YELLOW " 完整原因可用 journalctl -xen -u trojan-go 查看"
         return 1
     fi
-
     if ! systemctl is-active --quiet nginx; then
         colorEcho $RED " nginx未运行，伪装站可能不可用，请检查 nginx 配置"
     fi
