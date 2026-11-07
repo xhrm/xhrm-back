@@ -30,8 +30,9 @@ TROJAN_VERSION=""                  # ④ 固定 tag，如 v1.2.1（留空=自动
 TROJAN_VERSION_CHANNEL="prerelease" # ⑤ 自动选版策略：prerelease=最新 release(含预发布)优先、失败退回稳定版；stable=只跟随稳定版
 TROJAN_REPO="fregie/trojan-go"     # ⑥ GitHub 仓库，换 fork 时改这里
 TROJAN_BINARY_NAME="trojan-go"     # ⑦ 解压后主程序名（自动识别失败时的兜底）
-TROJAN_LISTEN_ADDR=""              # ⑧ 监听地址，留空=自动（有 IPv6 用 :: 双栈，否则用 0.0.0.0）
+TROJAN_LISTEN_ADDR=""              # ⑧ 监听地址，留空=按 ENABLE_IPV6 决定；可手动写 0.0.0.0 / ::
 ENABLE_BBR="auto"                  # ⑨ BBR：auto=Debian 且内核≥4.9 时自动开启；yes=强制尝试；no=不处理
+ENABLE_IPV6="no"                   # ⑩ no=只用 IPv4(0.0.0.0，推荐/默认)；yes=有公网 IPv6 且允许双栈时才用 ::
 BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"   # BBR 参数落盘位置
 # -------------------------------
 
@@ -255,12 +256,23 @@ loadState() {
     loadStateFallback
 }
 
-# trojan-go 监听地址：默认自动。有 IPv6 就用 "::"（双栈，v4/v6 都能连），
-# 内核/云厂商把 IPv6 关掉时退回 "0.0.0.0"，否则 trojan-go 会因绑定失败起不来。
+# trojan-go 监听地址：默认纯 IPv4(0.0.0.0)，避免部分云厂商只有链路本地 IPv6
+# 或 net.ipv6.bindv6only=1 导致绑定 :: 后 IPv4 客户端连不上。
+# 需要双栈时把顶部 ENABLE_IPV6 改成 yes，且必须同时满足"有公网 IPv6"和"未开启 bindv6only"。
 listenAddr() {
     if [[ -n "$TROJAN_LISTEN_ADDR" ]]; then
         echo "$TROJAN_LISTEN_ADDR"
-    elif ip -6 addr show 2>/dev/null | grep -q 'inet6'; then
+        return
+    fi
+    if [[ "$ENABLE_IPV6" != "yes" ]]; then
+        echo "0.0.0.0"
+        return
+    fi
+    if [[ "$(cat /proc/sys/net/ipv6/bindv6only 2>/dev/null)" = "1" ]]; then
+        echo "0.0.0.0"
+        return
+    fi
+    if ip -6 addr show scope global 2>/dev/null | grep -q 'inet6'; then
         echo "::"
     else
         echo "0.0.0.0"
@@ -969,11 +981,18 @@ writeRobots() {
 }
 
 configNginx() {
-    local ROBOT_CONFIG user nginx_test_out server_names site_conf
+    local ROBOT_CONFIG user nginx_test_out server_names site_conf LISTEN_LINES
     ensureDomains
     server_names="${DOMAINS[*]}"
     site_conf="${NGINX_CONF_PATH}${DOMAIN}.conf"
     mkdir -p /usr/share/nginx/html
+    # 按 ENABLE_IPV6 决定是否加 listen [::]:80。
+    # 纯 IPv4 的 VPS 上写 [::]:80 可能让 nginx 起不来（Address family not supported）。
+    if [[ "$ENABLE_IPV6" = "yes" ]] && ip -6 addr show scope global 2>/dev/null | grep -q 'inet6'; then
+        LISTEN_LINES=$'    listen 80;\n    listen [::]:80;'
+    else
+        LISTEN_LINES='    listen 80;'
+    fi
     if [[ "$ALLOW_SPIDER" = "n" ]]; then
         ROBOT_CONFIG="    location = /robots.txt {}"
     else
@@ -1031,8 +1050,7 @@ EOF
     if [[ "$PROXY_URL" = "" ]]; then
         cat > "$site_conf" <<-EOF
 server {
-    listen 80;
-    listen [::]:80;
+$LISTEN_LINES
     server_name ${server_names};
     root /usr/share/nginx/html;
 
@@ -1042,8 +1060,7 @@ EOF
     else
         cat > "$site_conf" <<-EOF
 server {
-    listen 80;
-    listen [::]:80;
+$LISTEN_LINES
     server_name ${server_names};
     root /usr/share/nginx/html;
     location / {
@@ -1254,7 +1271,7 @@ installTrojan() {
     sig=$(head -c 4 "$bin" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')
     if [[ -n "$sig" && "$sig" != "7f454c46" ]]; then
         colorEcho $RED " $(basename "$bin") 看起来不是 Linux 可执行文件，可能选错了，包内文件："
-        find "/tmp/${ZIP_FILE}" -type f | sed 's/^/   /'
+        find "$PACKAGE_DIR" -type f | sed 's/^/   /'
         colorEcho $YELLOW " 可设置 TROJAN_BINARY_NAME 指定正确的文件名"
         exit 1
     fi
@@ -1284,7 +1301,9 @@ installTrojan() {
     f=$(find "$PACKAGE_DIR" -type f -name '*.service' | head -n1)
     if [[ -n "$f" && -s "$f" ]]; then
         cp -f "$f" /etc/systemd/system/trojan-go.service
-        sed -i '/User=nobody/d' /etc/systemd/system/trojan-go.service
+        # 删掉任何 User= 行（不只 User=nobody）：trojan-go 需要 root 才能读 600 的
+        # config.json 和 700 的 /etc/trojan-go，非 root 起不来
+        sed -i '/^User=/d' /etc/systemd/system/trojan-go.service
         # 包里的 unit 不能全信：ExecStart 可能指向别的配置路径，或引用了未赋值的变量，
         # 那样会变成 -config /etc/trojan-go/.json 直接启动失败。这里统一强制成本脚本的配置路径。
         sed -i -E 's#^ExecStart=.*#ExecStart=/usr/bin/trojan-go -config /etc/trojan-go/config.json#' \
@@ -1424,17 +1443,31 @@ EOF
 }
 
 # 添加 iptables 放行规则：先用 -C 判断是否已存在，避免重复插入
+# 加 -w 防止 xtables lock，报错时给提示，能持久化就顺手持久化
 addIptablesRules() {
     local p
     for p in 80 443; do
-        iptables -w -C INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null ||
-            iptables -w -I INPUT -p tcp --dport "$p" -j ACCEPT
+        if ! iptables -w -C INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null; then
+            iptables -w -I INPUT -p tcp --dport "$p" -j ACCEPT \
+                || colorEcho $YELLOW " 添加 ${p}/tcp 放行规则失败，请检查 iptables"
+        fi
     done
     if [[ "$PORT" != "443" ]]; then
-        iptables -w -C INPUT -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null ||
-            iptables -w -I INPUT -p tcp --dport "$PORT" -j ACCEPT
+        if ! iptables -w -C INPUT -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null; then
+            iptables -w -I INPUT -p tcp --dport "$PORT" -j ACCEPT \
+                || colorEcho $YELLOW " 添加 ${PORT}/tcp 放行规则失败，请检查 iptables"
+        fi
     fi
-    colorEcho $YELLOW " 已添加 iptables 放行规则（重启后可能失效，需自行持久化）"
+    # 尽量持久化，避免重启 VPS 后规则丢失导致再次不通
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        netfilter-persistent save >/dev/null 2>&1 || true
+        colorEcho $YELLOW " 已添加 iptables 放行规则，并使用 netfilter-persistent 持久化"
+    elif [[ -d /etc/iptables ]]; then
+        iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+        colorEcho $YELLOW " 已添加 iptables 放行规则，并写入 /etc/iptables/rules.v4"
+    else
+        colorEcho $YELLOW " 已添加 iptables 放行规则（系统未装持久化工具，重启后可能失效）"
+    fi
 }
 
 setFirewall() {
@@ -1506,35 +1539,58 @@ install() {
 }
 
 start() {
-    local res port owner
+    local res port owner i ok
     res=$(status)
     if [[ $res -lt 2 ]]; then
         echo -e "${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
 
+    # 端口以配置文件为准，兼容命令行直接调用 start 时全局变量为空
+    port=$(grep -m1 'local_port' "$CONFIG_FILE" 2>/dev/null | cut -d: -f2 | tr -d "\",' '")
+    [[ -z "$port" ]] && port=443
+
     stopNginx
     startNginx
+
+    # 先等 nginx 在 80 真正监听，再启动 trojan-go。
+    # trojan-go 默认 disable_http_check=false，会去连 127.0.0.1:80，
+    # nginx 未就绪时启动可能进入异常状态（进程 active 但 443 没监听）。
+    for i in $(seq 1 10); do
+        ss -tlnH "sport = :80" 2>/dev/null | grep -q . && break
+        sleep 1
+    done
+
     systemctl restart trojan-go
 
-    local i
-    for i in 1 2 3 4 5; do
+    # 只认"进程 active + 端口真正 listen"才叫启动成功
+    ok=0
+    for i in $(seq 1 10); do
         sleep 1
-        systemctl is-active --quiet trojan-go && break
+        if systemctl is-active --quiet trojan-go \
+           && ss -tlnH "sport = :${port}" 2>/dev/null | grep -q .; then
+            ok=1
+            break
+        fi
     done
-    if ! systemctl is-active --quiet trojan-go && grep -q '"local_addr": "::"' "$CONFIG_FILE"; then
-        # 常见坑：内核/云厂商关了 IPv6，绑定 "::" 会直接失败，退回 IPv4 再试一次
-        colorEcho $YELLOW " 启动失败，尝试改用 IPv4 监听(0.0.0.0)重试..."
+
+    # 仅在 ENABLE_IPV6=yes 且确实写了 :: 时，双栈起不来才回退纯 IPv4
+    if [[ $ok -eq 0 ]] && grep -q '"local_addr": "::"' "$CONFIG_FILE"; then
+        colorEcho $YELLOW " 双栈(::)启动失败，改用 IPv4 监听(0.0.0.0)重试..."
         sed -i 's/"local_addr": "::"/"local_addr": "0.0.0.0"/' "$CONFIG_FILE"
         systemctl restart trojan-go
-        for i in 1 2 3 4 5; do
+        for i in $(seq 1 10); do
             sleep 1
-            systemctl is-active --quiet trojan-go && break
+            if systemctl is-active --quiet trojan-go \
+               && ss -tlnH "sport = :${port}" 2>/dev/null | grep -q .; then
+                ok=1
+                break
+            fi
         done
     fi
-    if ! systemctl is-active --quiet trojan-go; then
-        colorEcho $RED " go启动失败，请检查配置或端口是否被占用！"
-        port=$(grep local_port "$CONFIG_FILE" | cut -d: -f2 | tr -d \",' ')
+
+    if [[ $ok -eq 0 ]]; then
+        colorEcho $RED " go启动失败：端口 ${port} 未监听！"
         owner=$(portOwner "$port")
         if [[ -n "$owner" ]]; then
             echo " 端口占用信息："
@@ -1548,7 +1604,7 @@ start() {
     if ! systemctl is-active --quiet nginx; then
         colorEcho $RED " nginx未运行，伪装站可能不可用，请检查 nginx 配置"
     fi
-    colorEcho $BLUE " go启动成功"
+    colorEcho $BLUE " go启动成功（端口 ${port} 已监听）"
 }
 
 stop() {
