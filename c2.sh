@@ -1,6 +1,5 @@
 #!/bin/bash
-# go一键安装脚本（优化修复版：解决 Debian 偶发需重启及 iptables 持久化问题）
-
+# go一键安装脚本（c2.sh 完整修复与优化版）
 
 RED="\033[31m"      # Error message
 GREEN="\033[32m"    # Success message
@@ -21,15 +20,15 @@ HTML_ZIP_FILE="/tmp/html.zip"
 APT_CMD=(apt)
 APT_INSTALL_CMD=(apt install -y)
 # ---------- trojan-go 下载来源（换仓库时通常只改这一段） ----------
-TROJAN_ZIP_URL=""                  # ① 直接指定下载地址
-TROJAN_ASSET_PATTERN="trojan-go-linux-{arch}.zip"   # ② 文件名模板
-TROJAN_ARCH_ALIAS=""               # ③ 架构别名
-TROJAN_VERSION=""                  # ④ 固定 tag
-TROJAN_VERSION_CHANNEL="prerelease" # ⑤ 自动选版策略
-TROJAN_REPO="fregie/trojan-go"     # ⑥ GitHub 仓库
-TROJAN_BINARY_NAME="trojan-go"     # ⑦ 解压后主程序名
-TROJAN_LISTEN_ADDR=""              # ⑧ 监听地址
-ENABLE_BBR="auto"                  # ⑨ BBR 策略
+TROJAN_ZIP_URL=""                  # ① 直接指定下载地址（最优先，无视下面所有规则）
+TROJAN_ASSET_PATTERN="trojan-go-linux-{arch}.zip"   # ② 文件名模板，支持 {arch} {os} {version}
+TROJAN_ARCH_ALIAS=""               # ③ 仓库对架构的写法与默认不同时填，如 x86_64 / 64bit
+TROJAN_VERSION=""                  # ④ 固定 tag，如 v1.2.1（留空=自动；填了只用这一个）
+TROJAN_VERSION_CHANNEL="prerelease" # ⑤ 自动选版策略：prerelease=最新 release(含预发布)优先、失败退回稳定版；stable=只跟随稳定版
+TROJAN_REPO="fregie/trojan-go"     # ⑥ GitHub 仓库，换 fork 时改这里
+TROJAN_BINARY_NAME="trojan-go"     # ⑦ 解压后主程序名（自动识别失败时的兜底）
+TROJAN_LISTEN_ADDR=""              # ⑧ 监听地址，留空=自动（有 IPv6 用 :: 双栈，否则用 0.0.0.0）
+ENABLE_BBR="auto"                  # ⑨ BBR：auto=Debian 且内核≥4.9 时自动开启；yes=强制尝试；no=不处理
 BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"   # BBR 参数落盘位置
 # -------------------------------
 
@@ -160,7 +159,7 @@ checkSystem() {
     if (( EUID != 0 )); then
         echo -e " ${RED}请以root身份执行该脚本${PLAIN}"
         exit 1
-    }
+    fi
 
     if ! command -v apt >/dev/null 2>&1; then
         echo -e " ${RED}不受支持的Linux系统（需要 Debian/Ubuntu 等 apt 系统）${PLAIN}"
@@ -482,18 +481,41 @@ printDownloadHelp() {
 
 archAffix() {
     case "${1:-"$(uname -m)"}" in
-        i686|i386)          echo '386' ;;
-        x86_64|amd64)       echo 'amd64' ;;
-        *armv7*|armv6l)     echo 'armv7' ;;
-        *armv8*|aarch64)    echo 'armv8' ;;
-        *armv6*)            echo 'armv6' ;;
-        *arm*)              echo 'arm' ;;
-        *mips64le*)         echo 'mips64le' ;;
-        *mips64*)           echo 'mips64' ;;
-        *mipsle*)           echo 'mipsle-softfloat' ;;
-        *mips*)             echo 'mips-softfloat' ;;
-        *)                  return 1 ;;
+        i686|i386)
+            echo '386'
+        ;;
+        x86_64|amd64)
+            echo 'amd64'
+        ;;
+        *armv7*|armv6l)
+            echo 'armv7'
+        ;;
+        *armv8*|aarch64)
+            echo 'armv8'
+        ;;
+        *armv6*)
+            echo 'armv6'
+        ;;
+        *arm*)
+            echo 'arm'
+        ;;
+        *mips64le*)
+            echo 'mips64le'
+        ;;
+        *mips64*)
+            echo 'mips64'
+        ;;
+        *mipsle*)
+            echo 'mipsle-softfloat'
+        ;;
+        *mips*)
+            echo 'mips-softfloat'
+        ;;
+        *)
+            return 1
+        ;;
     esac
+
     return 0
 }
 
@@ -632,7 +654,6 @@ getData() {
     echo ""
     colorEcho $BLUE " 伪装网站：$PROXY_URL"
 
-
     echo ""
     colorEcho $BLUE " 是否允许搜索引擎爬取网站？[当前：$ALLOW_SPIDER]"
     echo "    y)允许，会有更多ip请求网站，但会消耗一些流量，vps流量充足情况下推荐使用"
@@ -763,7 +784,7 @@ certCoversDomain() {
         [[ "$n" = "$domain" ]] && return 0
         if [[ "$n" == "*."* ]]; then
             suffix="${n#\*.}"
-            [[ "$domain" == *.$suffix ]] && return 0
+            [[ "$domain" == *".$suffix" ]] && return 0
         fi
     done <<< "$all"
     return 1
@@ -1311,7 +1332,6 @@ EOF
     chmod 700 /etc/trojan-go 2>/dev/null
 }
 
-# 【已修复：显式加载内核模块 + 自动持久化规则】
 addIptablesRules() {
     modprobe ip_tables 2>/dev/null || true
     modprobe iptable_filter 2>/dev/null || true
@@ -1405,7 +1425,6 @@ install() {
     showInfo
 }
 
-# 【已修复：增加 daemon-reload 与启动缓冲】
 start() {
     local res port owner
     res=$(status)
