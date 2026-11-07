@@ -1,5 +1,5 @@
 #!/bin/bash
-# go一键安装脚本
+# go一键安装脚本（优化修复版：解决 Debian 偶发需重启及 iptables 持久化问题）
 
 
 RED="\033[31m"      # Error message
@@ -21,21 +21,19 @@ HTML_ZIP_FILE="/tmp/html.zip"
 APT_CMD=(apt)
 APT_INSTALL_CMD=(apt install -y)
 # ---------- trojan-go 下载来源（换仓库时通常只改这一段） ----------
-# 生效顺序：TROJAN_ZIP_URL > 按 TROJAN_ASSET_PATTERN 拼地址 > 从 release 资源列表自动识别
-# 版本策略：TROJAN_VERSION 填了就固定用它；留空则按 TROJAN_VERSION_CHANNEL 自动选
-TROJAN_ZIP_URL=""                  # ① 直接指定下载地址（最优先，无视下面所有规则）
-TROJAN_ASSET_PATTERN="trojan-go-linux-{arch}.zip"   # ② 文件名模板，支持 {arch} {os} {version}
-TROJAN_ARCH_ALIAS=""               # ③ 仓库对架构的写法与默认不同时填，如 x86_64 / 64bit
-TROJAN_VERSION=""                  # ④ 固定 tag，如 v1.2.1（留空=自动；填了只用这一个）
-TROJAN_VERSION_CHANNEL="prerelease" # ⑤ 自动选版策略：prerelease=最新 release(含预发布)优先、失败退回稳定版；stable=只跟随稳定版
-TROJAN_REPO="fregie/trojan-go"     # ⑥ GitHub 仓库，换 fork 时改这里
-TROJAN_BINARY_NAME="trojan-go"     # ⑦ 解压后主程序名（自动识别失败时的兜底）
-TROJAN_LISTEN_ADDR=""              # ⑧ 监听地址，留空=自动（有 IPv6 用 :: 双栈，否则用 0.0.0.0）
-ENABLE_BBR="auto"                  # ⑨ BBR：auto=Debian 且内核≥4.9 时自动开启；yes=强制尝试；no=不处理
+TROJAN_ZIP_URL=""                  # ① 直接指定下载地址
+TROJAN_ASSET_PATTERN="trojan-go-linux-{arch}.zip"   # ② 文件名模板
+TROJAN_ARCH_ALIAS=""               # ③ 架构别名
+TROJAN_VERSION=""                  # ④ 固定 tag
+TROJAN_VERSION_CHANNEL="prerelease" # ⑤ 自动选版策略
+TROJAN_REPO="fregie/trojan-go"     # ⑥ GitHub 仓库
+TROJAN_BINARY_NAME="trojan-go"     # ⑦ 解压后主程序名
+TROJAN_LISTEN_ADDR=""              # ⑧ 监听地址
+ENABLE_BBR="auto"                  # ⑨ BBR 策略
 BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"   # BBR 参数落盘位置
 # -------------------------------
 
-# 运行期全局变量：先全部初始化，避免未定义变量带来意外行为
+# 运行期全局变量
 DOMAIN=""
 DOMAINS=()
 DOMAIN_IN=""
@@ -53,7 +51,7 @@ KEY_FILE=""
 VERSION=""
 DOWNLOAD_URL=""
 CANDIDATES=()
-TAGS=()          # 本次要尝试的 release tag，按优先级排列（预发布优先时：[最新, 稳定版]）
+TAGS=()
 
 colorEcho() {
     echo -e "${1}${@:2}${PLAIN}"
@@ -67,13 +65,11 @@ validDomain() {
     [[ "$1" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$ ]]
 }
 
-# 域名输入检查：自动去掉首尾空白和结尾多余的点，再逐类给出明确错误
-# 通过时结果写入 DOMAIN_IN（已转小写），失败时原因写入 DOMAIN_ERR 并返回 1
 normalizeDomain() {
     local raw="$1" bad
-    raw="${raw#"${raw%%[![:space:]]*}"}"      # 去掉首部空白
-    raw="${raw%"${raw##*[![:space:]]}"}"      # 去掉尾部空白（含粘贴带来的 \r）
-    raw="${raw%.}"                            # 去掉结尾多余的点
+    raw="${raw#"${raw%%[![:space:]]*}"}"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    raw="${raw%.}"
     DOMAIN_IN="${raw,,}"
     DOMAIN_ERR=""
 
@@ -101,8 +97,6 @@ normalizeDomain() {
     return 0
 }
 
-# 支持以空格分隔的域名列表。
-# 第一个域名作为主域名，单域名输入仍走原来的单域名配置。
 normalizeDomains() {
     local input="$1" token existing raw_index=0
     local -a raw_domains=()
@@ -166,14 +160,13 @@ checkSystem() {
     if (( EUID != 0 )); then
         echo -e " ${RED}请以root身份执行该脚本${PLAIN}"
         exit 1
-    fi
+    }
 
-    # 只支持 Debian/Ubuntu 等使用 apt 的系统
     if ! command -v apt >/dev/null 2>&1; then
         echo -e " ${RED}不受支持的Linux系统（需要 Debian/Ubuntu 等 apt 系统）${PLAIN}"
         exit 1
     fi
-    export DEBIAN_FRONTEND=noninteractive   # 避免交互式提示卡住无人值守安装
+    export DEBIAN_FRONTEND=noninteractive
 
     if ! command -v systemctl >/dev/null 2>&1; then
         echo -e " ${RED}系统版本过低，请升级到最新版本${PLAIN}"
@@ -181,8 +174,6 @@ checkSystem() {
     fi
 }
 
-# ---------- 安装参数持久化 ----------
-# 记录本次安装的参数，供"查看配置/修改配置"复用
 saveState() {
     local state_tmp domain
     ensureDomains
@@ -192,7 +183,6 @@ saveState() {
         return 1
     }
 
-    # %q 让状态文件可再次 source，同时保留引号、空格等合法输入。
     if ! {
         printf 'DOMAIN=%q\n' "$DOMAIN"
         printf 'DOMAINS=('
@@ -223,12 +213,10 @@ saveState() {
     chmod 600 "$STATE_FILE"
 }
 
-# 从 config.json 读取字符串字段：confGet <字段名>
 confGet() {
     grep -m1 "\"$1\"[[:space:]]*:" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f4
 }
 
-# 旧版本脚本装的机器没有状态文件，尝试从 config.json 反推参数
 loadStateFallback() {
     [[ -f "$CONFIG_FILE" ]] || return 1
     DOMAIN="$(confGet sni)"
@@ -255,8 +243,6 @@ loadState() {
     loadStateFallback
 }
 
-# trojan-go 监听地址：默认自动。有 IPv6 就用 "::"（双栈，v4/v6 都能连），
-# 内核/云厂商把 IPv6 关掉时退回 "0.0.0.0"，否则 trojan-go 会因绑定失败起不来。
 listenAddr() {
     if [[ -n "$TROJAN_LISTEN_ADDR" ]]; then
         echo "$TROJAN_LISTEN_ADDR"
@@ -267,14 +253,10 @@ listenAddr() {
     fi
 }
 
-# ================= BBR 加速（Debian 默认开启） =================
-
-# 当前是否已经在用 bbr
 bbrEnabled() {
     [[ "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" = "bbr" ]]
 }
 
-# BBR 状态文本（已开启带绿灯，未开启带红灯）；调用方自己加标签
 bbrText() {
     local cc qdisc
     cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)
@@ -286,7 +268,6 @@ bbrText() {
     fi
 }
 
-# 开启 BBR：写 sysctl 配置并立即生效
 setBBR() {
     if [[ "$ENABLE_BBR" = "no" ]]; then
         colorEcho $YELLOW " 已按配置跳过 BBR（ENABLE_BBR=\"no\"）"
@@ -328,9 +309,7 @@ EOF
     fi
     return 0
 }
-# =============================================================
 
-# 列出监听指定端口的进程（用于排查端口占用）
 portOwner() {
     ss -ntlp 2>/dev/null | awk -v p=":${1}$" 'NR>1 && $4 ~ p'
 }
@@ -369,9 +348,6 @@ statusText() {
     esac
 }
 
-# ============ trojan-go 下载地址解析（适配不同仓库的命名规则） ============
-
-# 本机架构在该仓库文件名里的写法：默认用 archAffix，可用 TROJAN_ARCH_ALIAS 覆盖
 pkgArch() {
     if [[ -n "$TROJAN_ARCH_ALIAS" ]]; then
         echo "$TROJAN_ARCH_ALIAS"
@@ -380,7 +356,6 @@ pkgArch() {
     fi
 }
 
-# 本机架构的多种常见写法（用于在 release 资源列表里自动挑选文件）
 platformArchRegex() {
     case "$(uname -m)" in
         i686|i386)          echo 'i386|i686|386' ;;
@@ -396,24 +371,16 @@ platformArchRegex() {
     esac
 }
 
-# 仓库最新 release 的 tag（稳定版）。注意 GitHub 的 releases/latest 会跳过所有预发布，
-# 所以"最新稳定版"和"最新版"可能不是同一个。tag 原样返回，GitHub 下载路径就是 tag 原文
 apiLatestTag() {
     curl -fsSL --max-time 15 "https://api.github.com/repos/${TROJAN_REPO}/releases/latest" 2>/dev/null \
         | grep -m1 '"tag_name"' | cut -d'"' -f4
 }
 
-# 仓库最新的 release tag（含预发布）。releases 列表默认按创建时间倒序，第一条就是最新
 apiNewestTag() {
     curl -fsSL --max-time 20 "https://api.github.com/repos/${TROJAN_REPO}/releases?per_page=10" 2>/dev/null \
         | grep -m1 '"tag_name"' | cut -d'"' -f4
 }
 
-# 解析本次要尝试的 tag 列表，按优先级写进 TAGS：
-#   TROJAN_VERSION 非空              → 只用它（手动固定版本）
-#   TROJAN_VERSION_CHANNEL=stable    → 只用 releases/latest（稳定版）
-#   其它（默认 prerelease）          → 先取最新 release（含预发布），再附稳定版兜底
-# 两个接口都没通时 TAGS 为空，调用方回退到 releases/latest/download/<文件名> 永久链接
 resolveTags() {
     TAGS=()
     VERSION=""
@@ -448,7 +415,6 @@ resolveTags() {
     return 0
 }
 
-# 从下载地址里取出版本号（形如 .../releases/download/<tag>/<文件名>）
 tagFromUrl() {
     local u="$1"
     [[ "$u" == */releases/download/* ]] || return 0
@@ -456,19 +422,17 @@ tagFromUrl() {
     echo "${u%%/*}"
 }
 
-# 某个 release 里所有资源的下载地址，一行一个
 apiAssetList() {
     local api="${1:-https://api.github.com/repos/${TROJAN_REPO}/releases/latest}"
     curl -fsSL --max-time 20 "$api" 2>/dev/null \
         | grep -o '"browser_download_url": *"[^"]*"' | cut -d'"' -f4
 }
 
-# 按命名规则生成候选下载地址（TROJAN_ZIP_URL / TROJAN_ASSET_PATTERN）
 buildDownloadCandidates() {
     CANDIDATES=()
     [[ -n "$TROJAN_ZIP_URL" ]] && CANDIDATES+=("$TROJAN_ZIP_URL")
     if [[ -z "$TROJAN_ASSET_PATTERN" ]]; then
-        resolveTags          # 后面"资源列表自动识别"那步要用 TAGS
+        resolveTags
         return 0
     fi
 
@@ -479,14 +443,12 @@ buildDownloadCandidates() {
         exit 1
     }
 
-    # 版本优先级：TROJAN_VERSION 固定 > 最新 release（含预发布）> 稳定版兜底
     resolveTags
     if [[ ${#TAGS[@]} -eq 0 ]]; then
         if [[ "$TROJAN_ASSET_PATTERN" == *"{version}"* ]]; then
             colorEcho $YELLOW " 文件名模板含 {version}，但没取到 release tag，改为自动识别资源列表"
             return 0
         fi
-        # 两个 release 接口都没通：releases/latest/download/<文件名> 是不用查 API 的永久链接
         name="${TROJAN_ASSET_PATTERN//\{arch\}/$arch}"
         name="${name//\{os\}/linux}"
         CANDIDATES+=("https://github.com/${TROJAN_REPO}/releases/latest/download/${name}")
@@ -503,7 +465,6 @@ buildDownloadCandidates() {
     return 0
 }
 
-# 下载地址都没命中时，打印怎么改
 printDownloadHelp() {
     colorEcho $YELLOW " 可以这样指定下载来源（改脚本顶部即可）："
     echo "   1) TROJAN_ASSET_PATTERN=\"仓库的真实文件名模板\"，如 trojan-go-linux-{arch}.tar.gz"
@@ -521,41 +482,18 @@ printDownloadHelp() {
 
 archAffix() {
     case "${1:-"$(uname -m)"}" in
-        i686|i386)
-            echo '386'
-        ;;
-        x86_64|amd64)
-            echo 'amd64'
-        ;;
-        *armv7*|armv6l)
-            echo 'armv7'
-        ;;
-        *armv8*|aarch64)
-            echo 'armv8'
-        ;;
-        *armv6*)
-            echo 'armv6'
-        ;;
-        *arm*)
-            echo 'arm'
-        ;;
-        *mips64le*)
-            echo 'mips64le'
-        ;;
-        *mips64*)
-            echo 'mips64'
-        ;;
-        *mipsle*)
-            echo 'mipsle-softfloat'
-        ;;
-        *mips*)
-            echo 'mips-softfloat'
-        ;;
-        *)
-            return 1
-        ;;
+        i686|i386)          echo '386' ;;
+        x86_64|amd64)       echo 'amd64' ;;
+        *armv7*|armv6l)     echo 'armv7' ;;
+        *armv8*|aarch64)    echo 'armv8' ;;
+        *armv6*)            echo 'armv6' ;;
+        *arm*)              echo 'arm' ;;
+        *mips64le*)         echo 'mips64le' ;;
+        *mips64*)           echo 'mips64' ;;
+        *mipsle*)           echo 'mipsle-softfloat' ;;
+        *mips*)             echo 'mips-softfloat' ;;
+        *)                  return 1 ;;
     esac
-
     return 0
 }
 
@@ -584,10 +522,8 @@ getData() {
             colorEcho $BLUE " 域名模式：单域名"
         fi
 
-        # 密码自动随机生成，不需要手动设置
         PASSWORD=$(randStr 16)
     else
-        # 改配置：读取已有参数，只更新需要变化的项
         if ! loadState || [[ -z "$DOMAIN" ]]; then
             colorEcho $RED " 读取已有配置失败，请重新安装。"
             exit 1
@@ -707,14 +643,13 @@ getData() {
     elif [[ "${answer,,}" = "n" ]]; then
         ALLOW_SPIDER="n"
     elif [[ "$can_change" != "yes" ]]; then
-        ALLOW_SPIDER="n"    # 全新安装默认不允许爬虫
+        ALLOW_SPIDER="n"
     fi
     echo ""
 
     colorEcho $BLUE " 允许搜索引擎：$ALLOW_SPIDER"
 }
 
-# ================= 定时重启功能（trojan-go服务） =================
 DEFAULT_RESTART_TIME="00:10"
 SERVICE_NAME="trojan-go"
 LOG_FILE="/etc/trojan-go/log.txt"
@@ -723,7 +658,6 @@ CRON_FILE="/etc/cron.d/trojan-go-autorestart"
 CURRENT_RESTART_TIME=""
 AUTO_RESTART_STATUS="disabled"
 
-# 获取当前定时重启状态
 getAutoRestartStatus() {
     AUTO_RESTART_STATUS="disabled"
     CURRENT_RESTART_TIME=""
@@ -737,7 +671,6 @@ getAutoRestartStatus() {
     echo "$AUTO_RESTART_STATUS"
 }
 
-# 设置或更新定时重启任务
 setAutoRestart() {
     local time_str="${1:-$DEFAULT_RESTART_TIME}"
     local hour minute
@@ -750,7 +683,6 @@ setAutoRestart() {
     [[ -z "$hour" ]] && hour=0
     [[ -z "$minute" ]] && minute=10
 
-    # 确保 cron 服务启动
     CRON_SERVICE="cron"
     if ! systemctl list-unit-files | grep -qE '^cron\.service'; then
         echo "未找到 cron 服务，请确认已安装 cron。"
@@ -763,14 +695,12 @@ setAutoRestart() {
         systemctl enable "$CRON_SERVICE" >/dev/null 2>&1 || true
     fi
 
-    # 写入 /etc/cron.d 文件
     echo "$minute $hour * * * root rm -f $LOG_FILE; /bin/systemctl restart $SERVICE_NAME # $CRON_MARKER" > $CRON_FILE
     chmod 644 $CRON_FILE
 
     echo -e " ${BLUE}定时任务已设置：每天 $(printf '%02d:%02d' "$hour" "$minute") 清理日志并自动重启 $SERVICE_NAME${PLAIN}"
 }
 
-# 关闭定时重启
 disableAutoRestart() {
     if [[ -f "$CRON_FILE" ]]; then
         rm -f "$CRON_FILE"
@@ -780,7 +710,6 @@ disableAutoRestart() {
     fi
 }
 
-# 修改定时重启时间
 modifyAutoRestartTime() {
     read -p "请输入新的服务重启时间 (格式 HH:MM，例如 00:10)：" NEW_TIME
     if [[ -z "$NEW_TIME" ]]; then
@@ -795,7 +724,6 @@ modifyAutoRestartTime() {
     disableAutoRestart
     setAutoRestart "$NEW_TIME"
 }
-# ================================================
 
 installNginx() {
     echo ""
@@ -815,7 +743,6 @@ stopNginx() {
     systemctl stop nginx
 }
 
-# 校验证书与私钥是否匹配，并且证书未过期
 certKeyMatch() {
     local cert=$1 key=$2 pub_cert pub_key
     [[ -f "$cert" && -f "$key" ]] || return 1
@@ -825,7 +752,6 @@ certKeyMatch() {
     [[ -n "$pub_cert" && "$pub_cert" = "$pub_key" ]]
 }
 
-# 证书里的域名是否覆盖指定域名（支持精确匹配和通配符）
 certCoversDomain() {
     local cert=$1 domain=$2 all n suffix names cn
     cn=$(openssl x509 -in "$cert" -noout -subject 2>/dev/null | grep -o 'CN[[:space:]]*=[[:space:]]*[^,/]*' | head -n1 | sed 's/.*=[[:space:]]*//')
@@ -837,13 +763,12 @@ certCoversDomain() {
         [[ "$n" = "$domain" ]] && return 0
         if [[ "$n" == "*."* ]]; then
             suffix="${n#\*.}"
-            [[ "$domain" == *".$suffix" ]] && return 0
+            [[ "$domain" == *.$suffix ]] && return 0
         fi
     done <<< "$all"
     return 1
 }
 
-# 多域名证书必须覆盖全部域名
 certCoversDomains() {
     local cert=$1 domain
     ensureDomains
@@ -853,8 +778,6 @@ certCoversDomains() {
     return 0
 }
 
-# 在 /root 下寻找可用的本地证书/私钥对：优先同名配对，其次目录内唯一的 .key
-# 找到时设置 LOCAL_CERT / LOCAL_KEY 并返回 0
 findLocalCert() {
     local p k keys
     for p in /root/*.pem; do
@@ -887,7 +810,6 @@ getCert() {
     local -a domain_args=()
     mkdir -p /etc/trojan-go
 
-    # 1) 本地证书优先（/root 下的 .pem/.key）
     if findLocalCert; then
         echo -e "${GREEN} 检测到本地证书：${LOCAL_CERT}${PLAIN}"
         echo -e "${GREEN} 对应私钥：${LOCAL_KEY}${PLAIN}"
@@ -901,7 +823,6 @@ getCert() {
         return 0
     fi
 
-    # 2) 已有证书覆盖全部域名才复用，否则重新申请
     if certKeyMatch "$CERT_FILE" "$KEY_FILE"; then
         if certCoversDomains "$CERT_FILE"; then
             echo -e "${GREEN} 复用已有证书：${CERT_FILE}${PLAIN}"
@@ -911,7 +832,6 @@ getCert() {
         colorEcho $YELLOW " 已有证书未覆盖全部域名，将重新申请：$(domainsText)"
     fi
 
-    # 3) 都没有才通过 acme.sh 申请
     colorEcho $BLUE " 未找到可用证书，开始申请..."
     stopNginx
     systemctl stop trojan-go 2>/dev/null
@@ -959,8 +879,6 @@ getCert() {
     chmod 600 "$KEY_FILE"
 }
 
-
-# 生成 robots.txt。必须在站点文件解压完成后调用，否则会被解压出来的文件覆盖
 writeRobots() {
     mkdir -p /usr/share/nginx/html
     if [[ "$ALLOW_SPIDER" = "n" ]]; then
@@ -993,8 +911,6 @@ worker_processes auto;
 error_log /var/log/nginx/error.log;
 pid /run/nginx.pid;
 
-# Load dynamic modules. See /usr/share/doc/nginx/README.dynamic.
-
 events {
     worker_connections 1024;
 }
@@ -1017,9 +933,6 @@ http {
     include             /etc/nginx/mime.types;
     default_type        application/octet-stream;
 
-    # Load modular configuration files from the /etc/nginx/conf.d directory.
-    # See http://nginx.org/en/docs/ngx_core_module.html#include
-    # for more information.
     include /etc/nginx/conf.d/*.conf;
 }
 EOF
@@ -1062,7 +975,6 @@ EOF
 
     writeRobots
 
-    # 写完立即校验，避免生成非法配置导致伪装站直接不可用
     if command -v nginx >/dev/null 2>&1 && ! nginx_test_out=$(nginx -t 2>&1); then
         colorEcho $RED " nginx 配置校验失败："
         echo "$nginx_test_out"
@@ -1070,14 +982,11 @@ EOF
     fi
 }
 
-# 下载 trojan-go 包：先按命名规则拼地址，失败再从 release 资源列表自动识别
-# 候选地址按版本优先级排列（TAGS），所以"最新预发布下不到"会自动落到稳定版
 downloadTrojanPackage() {
     local url hits matched arch_re zip_urls tar_urls other_urls api apis tag
     local direct_url_tried="false"
     rm -f "$PACKAGE_FILE"
 
-    # 直链最优先：成功时不再请求 Release API，失败后仍执行原有全部回退。
     if [[ -n "$TROJAN_ZIP_URL" ]]; then
         echo " 尝试下载：$TROJAN_ZIP_URL"
         if wget -q -T 30 -t 2 -O "$PACKAGE_FILE" "$TROJAN_ZIP_URL" && [[ -s "$PACKAGE_FILE" ]]; then
@@ -1102,14 +1011,12 @@ downloadTrojanPackage() {
         colorEcho $YELLOW " 该地址不可用，换下一个"
     done
 
-    # 走到这里说明文件名规则和我们猜的不一样，去 release 资源列表里挑
     echo " 按命名规则没找到文件，改为从 release 资源列表自动识别..."
     arch_re=$(platformArchRegex) || {
         colorEcho $RED " 暂不支持的系统架构，无法自动识别安装包"
         exit 1
     }
 
-    # 按版本优先级逐个查资源列表（TAGS 为空时退回稳定版 latest 接口）
     apis=()
     if [[ ${#TAGS[@]} -gt 0 ]]; then
         for tag in "${TAGS[@]}"; do
@@ -1126,12 +1033,10 @@ downloadTrojanPackage() {
             continue
         fi
 
-        # 先按架构筛，再排除其它系统与校验文件
         matched=$(echo "$hits" | grep -Ei "$arch_re" \
             | grep -Eiv 'windows|darwin|macos|freebsd|openbsd|netbsd|android|\.(md5|sha1|sha256|sha512|sig|asc|txt|json)$')
         if [[ -z "$matched" ]]; then
             colorEcho $YELLOW " 该 release 里没有匹配当前架构（$(uname -m)）的文件"
-            # 最后一个版本才把文件清单打出来，方便定位架构写法
             if [[ "$api" = "${apis[${#apis[@]}-1]}" ]]; then
                 echo "$hits" | sed 's|.*/||' | sed 's/^/   /'
             else
@@ -1140,7 +1045,6 @@ downloadTrojanPackage() {
             continue
         fi
 
-        # 下载顺序：zip 优先，其次 tar 包，最后其它压缩格式
         zip_urls=$(echo "$matched" | grep -Ei '\.zip$')
         tar_urls=$(echo "$matched" | grep -Ei '\.(tar\.gz|tgz|tar\.xz|txz|tar\.bz2)$')
         other_urls=$(echo "$matched" | grep -Eiv '\.zip$|\.(tar\.gz|tgz|tar\.xz|txz|tar\.bz2)$')
@@ -1174,7 +1078,6 @@ downloadFile() {
     fi
 }
 
-# 下载不到伪装站页面时的兜底页面，避免站点空白
 writeFallbackPage() {
     printf '%s\n' \
         '<!DOCTYPE html>' \
@@ -1184,7 +1087,6 @@ writeFallbackPage() {
         '</html>' > /usr/share/nginx/html/index.html
 }
 
-# release 包结构变化时的兜底 service 文件
 writeDefaultService() {
     cat > /etc/systemd/system/trojan-go.service <<-EOF
 [Unit]
@@ -1204,7 +1106,6 @@ WantedBy=multi-user.target
 EOF
 }
 
-# 解压安装包：zip / tar.gz / tar.xz / 单文件压缩都能处理
 extractPackage() {
     local f=$1 d=$2
     rm -rf "$d"
@@ -1215,7 +1116,6 @@ extractPackage() {
     if tar -xf "$f" -C "$d" >/dev/null 2>&1; then
         return 0
     fi
-    # 有些仓库只发了一个压缩过的二进制文件
     if gzip -dc "$f" > "$d/${TROJAN_BINARY_NAME}" 2>/dev/null && [[ -s "$d/${TROJAN_BINARY_NAME}" ]]; then
         return 0
     fi
@@ -1230,11 +1130,10 @@ extractPackage() {
 installTrojan() {
     local bin f g sig
     extractPackage "$PACKAGE_FILE" "$PACKAGE_DIR" || {
-        colorEcho $RED " 安装包解压失败（不认识的压缩格式？）：$PACKAGE_FILE"
+        colorEcho $RED " 安装包解压失败：$PACKAGE_FILE"
         exit 1
     }
 
-    # 找主程序：先精确名，再名字里带 trojan，最后按体积兜底
     bin=$(find "$PACKAGE_DIR" -type f -name "${TROJAN_BINARY_NAME}" | head -n1)
     if [[ -z "$bin" ]]; then
         bin=$(find "$PACKAGE_DIR" -type f -iname "*${TROJAN_BINARY_NAME}*" ! -name '*.dat' | head -n1)
@@ -1250,12 +1149,9 @@ installTrojan() {
         find "$PACKAGE_DIR" -type f | sed 's/^/   /'
         exit 1
     fi
-    # 确认选中的确实是 Linux 可执行文件（ELF），避免把说明文档/数据文件当成程序
     sig=$(head -c 4 "$bin" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')
     if [[ -n "$sig" && "$sig" != "7f454c46" ]]; then
-        colorEcho $RED " $(basename "$bin") 看起来不是 Linux 可执行文件，可能选错了，包内文件："
-        find "/tmp/${ZIP_FILE}" -type f | sed 's/^/   /'
-        colorEcho $YELLOW " 可设置 TROJAN_BINARY_NAME 指定正确的文件名"
+        colorEcho $RED " $(basename "$bin") 看起来不是 Linux 可执行文件"
         exit 1
     fi
     echo " 主程序：$(basename "$bin")"
@@ -1268,15 +1164,12 @@ installTrojan() {
         colorEcho $YELLOW " 伪装站页面为空，已写入内置页面"
         writeFallbackPage
     fi
-    # 保证 nginx（Debian 下是 www-data）能读，避免解压出来的文件权限过紧导致 403
     chmod -R a+rX /usr/share/nginx/html 2>/dev/null
-    # 必须在页面解压完成之后再写 robots.txt，否则会被覆盖
     writeRobots
 
     cp -f "$bin" /usr/bin/trojan-go
     chmod 755 /usr/bin/trojan-go
 
-    # geoip/geosite 与 service 文件都是可选件，有就拷
     for g in geoip.dat geosite.dat; do
         f=$(find "$PACKAGE_DIR" -type f -name "$g" | head -n1)
         [[ -n "$f" ]] && cp -f "$f" /etc/trojan-go/
@@ -1285,18 +1178,14 @@ installTrojan() {
     if [[ -n "$f" && -s "$f" ]]; then
         cp -f "$f" /etc/systemd/system/trojan-go.service
         sed -i '/User=nobody/d' /etc/systemd/system/trojan-go.service
-        # 包里的 unit 不能全信：ExecStart 可能指向别的配置路径，或引用了未赋值的变量，
-        # 那样会变成 -config /etc/trojan-go/.json 直接启动失败。这里统一强制成本脚本的配置路径。
         sed -i -E 's#^ExecStart=.*#ExecStart=/usr/bin/trojan-go -config /etc/trojan-go/config.json#' \
             /etc/systemd/system/trojan-go.service
     fi
-    # 包里没有 unit、或修正后仍然没有可用的 ExecStart，就写脚本自带的那份
     if [[ ! -s /etc/systemd/system/trojan-go.service ]] ||
         ! grep -q '^ExecStart=' /etc/systemd/system/trojan-go.service; then
         writeDefaultService
     fi
 
-    # 崩溃自动拉起，并提高文件描述符上限
     mkdir -p /etc/systemd/system/trojan-go.service.d
     cat > /etc/systemd/system/trojan-go.service.d/override.conf <<-EOF
 [Service]
@@ -1418,13 +1307,15 @@ configTrojan() {
   }
 }
 EOF
-    # 配置文件里有明文密码，收紧权限
     chmod 600 "$CONFIG_FILE"
     chmod 700 /etc/trojan-go 2>/dev/null
 }
 
-# 添加 iptables 放行规则：先用 -C 判断是否已存在，避免重复插入
+# 【已修复：显式加载内核模块 + 自动持久化规则】
 addIptablesRules() {
+    modprobe ip_tables 2>/dev/null || true
+    modprobe iptable_filter 2>/dev/null || true
+
     local p
     for p in 80 443; do
         iptables -w -C INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null ||
@@ -1434,7 +1325,21 @@ addIptablesRules() {
         iptables -w -C INPUT -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null ||
             iptables -w -I INPUT -p tcp --dport "$PORT" -j ACCEPT
     fi
-    colorEcho $YELLOW " 已添加 iptables 放行规则（重启后可能失效，需自行持久化）"
+
+    if ! command -v netfilter-persistent >/dev/null 2>&1 && ! dpkg -l | grep -q iptables-persistent; then
+        echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
+        echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
+        DEBIAN_FRONTEND=noninteractive "${APT_INSTALL_CMD[@]}" iptables-persistent >/dev/null 2>&1
+    fi
+    
+    mkdir -p /etc/iptables
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        netfilter-persistent save >/dev/null 2>&1
+    else
+        iptables-save > /etc/iptables/rules.v4
+    fi
+
+    colorEcho $BLUE " 已添加并持久化 iptables 放行规则（重启后依然有效）"
 }
 
 setFirewall() {
@@ -1465,15 +1370,12 @@ setFirewall() {
     fi
 }
 
-
-
 install() {
     getData
 
     "${APT_CMD[@]}" clean
     "${APT_CMD[@]}" update
 
-    # 只装真正用得到的：下载、解压、证书、定时任务
     "${APT_INSTALL_CMD[@]}" wget curl unzip tar openssl ca-certificates kmod
     "${APT_INSTALL_CMD[@]}" xz-utils cron
 
@@ -1496,15 +1398,14 @@ install() {
     installTrojan
     configTrojan
 
-    # 记录本次安装的参数，供"查看配置/修改配置"复用
     saveState
 
     start
     setAutoRestart
     showInfo
-
 }
 
+# 【已修复：增加 daemon-reload 与启动缓冲】
 start() {
     local res port owner
     res=$(status)
@@ -1512,6 +1413,9 @@ start() {
         echo -e "${RED}go未安装，请先安装！${PLAIN}"
         return
     fi
+
+    systemctl daemon-reload
+    sleep 1
 
     stopNginx
     startNginx
@@ -1523,7 +1427,6 @@ start() {
         systemctl is-active --quiet trojan-go && break
     done
     if ! systemctl is-active --quiet trojan-go && grep -q '"local_addr": "::"' "$CONFIG_FILE"; then
-        # 常见坑：内核/云厂商关了 IPv6，绑定 "::" 会直接失败，退回 IPv4 再试一次
         colorEcho $YELLOW " 启动失败，尝试改用 IPv4 监听(0.0.0.0)重试..."
         sed -i 's/"local_addr": "::"/"local_addr": "0.0.0.0"/' "$CONFIG_FILE"
         systemctl restart trojan-go
@@ -1557,7 +1460,6 @@ stop() {
     colorEcho $BLUE " go停止成功"
 }
 
-
 restart() {
     local res
     res=$(status)
@@ -1578,8 +1480,8 @@ reconfig() {
         return
     fi
 
-    getData true      # 读取已有参数，只更新需要变化的项
-    getCert           # 本地证书 > 已有证书 > acme 申请；失败时不改动现有配置
+    getData true
+    getCert
     configTrojan
     setFirewall
     configNginx
@@ -1589,7 +1491,6 @@ reconfig() {
     showInfo
 }
 
-
 showInfo() {
     local res
     res=$(status)
@@ -1598,7 +1499,6 @@ showInfo() {
         return
     fi
 
-    # 优先读状态文件；旧版本脚本装的机器回退到解析 config.json
     loadState >/dev/null 2>&1
     ensureDomains
     echo ""
@@ -1682,7 +1582,6 @@ menu() {
             restart
             ;;
         4)
-            # 定时重启管理子菜单
             echo ""
             echo -e "   ${BOLD}${BLUE}定时重启管理${PLAIN}"
             echo ""
@@ -1740,8 +1639,6 @@ menu() {
 checkSystem
 
 action="${1:-menu}"
-# 菜单里已精简，但 start/stop/showInfo/reconfig 仍可从命令行直接调用，例如：
-#   bash 26.sh reconfig     bash 26.sh showInfo
 case "$action" in
     menu|start|restart|stop|showInfo|reconfig)
         ${action}
